@@ -131,7 +131,8 @@ export async function leerArchivo(file) {
   const XLSX = await cargarXLSX();
   const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
   const conjuntos = [];
-  const mFile = file.name.match(/W\s*\[?\s*(\d{1,2})\s*\]?/i);
+  // Semana en el nombre: "W[47]", "W47" o "Dashboard V248" (= V2 semana 48)
+  const mFile = file.name.match(/W\s*\[?\s*(\d{1,2})\s*\]?/i) || file.name.match(/V2(?:\.0)?\s*[_\-\s]*(\d{2})(?!\d)/i);
   const hoy = isoWeek();
   for (const nombre of wb.SheetNames) {
     if (/^ejemplo/i.test(nombre.trim())) continue;
