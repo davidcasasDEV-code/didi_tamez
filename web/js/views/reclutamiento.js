@@ -12,6 +12,9 @@ const rechazado = (d) => Object.values(d.ch.docs || {}).some((v) => /rechaz|reje
 const listo = (d) => /listo para conducir/i.test(d.ch.estatus_didi || '');
 const enProceso = (d) => !listo(d) && !rechazado(d) && !d.docs.length;
 const ultimaSemana = () => S.data.semanas[0];
+// Filtro por documento: pendiente = sin subir, rechazado/rejected, expirado o en revisión
+const DOCS_FILTRO = [['ine', 'INE'], ['licencia', 'Licencia de conducir'], ['tarjeta', 'Tarjeta de circulación'], ['foto', 'Foto de perfil'], ['bgc', 'Antecedentes (BGC)']];
+const docPendiente = (d, k) => /sin subir|rechaz|reject|expir|pending|review/i.test(d.ch.docs?.[k] || '');
 const sinViajes = (d) => d.s0 === ultimaSemana() ? !(+d.m0?.viajes > 0) : true;
 
 const PARTES = {
@@ -23,11 +26,13 @@ const PARTES = {
       ['documentos', 'Documentos pendientes', (d) => d.docs.length > 0 && !d.bloqueado],
       ['rechazados', 'Rechazados', rechazado],
       ['listos', 'Listos, sin viajes', listo],
+      ['sincarro', 'Aprobados sin carro', (d) => /sin carro/i.test(d.ch.hoja_equipo || '')],
       ['proceso', 'En proceso / sin datos de DiDi', enProceso],
+      ['didiactivo', 'Ya conduce según DiDi', (d) => d.cats.has('didi_activo')],
     ],
   },
   conduciendo: {
-    label: 'Conduciendo', desc: 'Reclutados que ya están manejando',
+    label: 'Conduciendo', desc: 'Los que el equipo ya tiene trabajando (pestaña "conduciendo")',
     base: (d) => d.ch.reclutado_por && d.cats.has('rec_conduciendo'),
     tabs: [
       ['todos', 'Todos', () => true],
@@ -50,6 +55,7 @@ function lista(f) {
   return [...S.d.values()].filter((d) => {
     if (!d.cats.has('recluta') || !parte.base(d) || !tab(d)) return false;
     if (f.parte !== 'didi' && f.rec && d.ch.reclutado_por !== f.rec) return false;
+    if (f.doc && !docPendiente(d, f.doc)) return false;
     if (q) {
       const hay = `${d.ch.nombre || ''} ${d.ch.curp || ''} ${d.ch.id}`.toLowerCase();
       if (!hay.includes(q) && !(qd.length >= 4 && String(d.ch.cel || '').includes(qd))) return false;
@@ -89,7 +95,7 @@ export function renderReclutamiento(el) {
       act: mios.filter((d) => d.ch.activado_semana).length, porSem: semanasAct.map((w) => mios.filter((d) => d.ch.activado_semana === w).length) };
   }).filter((r) => r.total);
 
-  const tabsHtml = parte.tabs.map(([k, l, fn]) => `<button class="tab ${f.tab === k ? 'active' : ''}" data-tab="${k}">${l} <span class="badge">${todos.filter(parte.base).filter(fn).filter((d) => f.parte === 'didi' || !f.rec || d.ch.reclutado_por === f.rec).length}</span></button>`).join('');
+  const tabsHtml = parte.tabs.map(([k, l, fn]) => `<button class="tab ${f.tab === k ? 'active' : ''}" data-tab="${k}">${l} <span class="badge">${todos.filter(parte.base).filter(fn).filter((d) => (f.parte === 'didi' || !f.rec || d.ch.reclutado_por === f.rec) && (!f.doc || docPendiente(d, f.doc))).length}</span></button>`).join('');
 
   el.innerHTML = `
   <div class="topbar">
@@ -111,13 +117,17 @@ export function renderReclutamiento(el) {
     </tbody></table></div></div>` : `<div class="card" style="margin-bottom:14px"><b>Aún no hay reclutas registrados.</b> <span class="muted">Importa tu Excel de reclutas en Importar, o da de alta uno por uno con “+ Nuevo recluta”.</span></div>`}
 
   <div class="tabs">${tabsHtml}</div>
-  <div class="filters" style="grid-template-columns:2fr 1fr">
+  <div class="filters" style="grid-template-columns:2fr 1fr 1fr">
     <input class="input search" id="rq" placeholder="Buscar por nombre, celular, CURP o ID…" value="${esc(f.q)}">
     ${f.parte !== 'didi' ? `<select class="input" id="rrec">
       <option value="">Reclutado por: todos</option>
       <option value="${esc(S.yo.usuario)}" ${f.rec === S.yo.usuario ? 'selected' : ''}>Mis reclutas</option>
       ${usuarios.filter((u) => u.usuario !== S.yo.usuario).map((u) => `<option value="${esc(u.usuario)}" ${f.rec === u.usuario ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}
     </select>` : '<div></div>'}
+    <select class="input" id="rdoc" title="Muestra solo a quienes les falta, les rechazaron o se les venció ese documento">
+      <option value="">Documento pendiente: cualquiera</option>
+      ${DOCS_FILTRO.map(([k, l]) => `<option value="${k}" ${f.doc === k ? 'selected' : ''}>Falta / rechazado: ${l} (${todos.filter(parte.base).filter((d) => docPendiente(d, k)).length})</option>`).join('')}
+    </select>
   </div>
 
   ${seleccionable && sel.size ? `<div class="bulkbar"><b>${sel.size} seleccionado(s)</b><span class="spacer"></span>
@@ -160,6 +170,7 @@ export function renderReclutamiento(el) {
   el.querySelectorAll('[data-rec]').forEach((b) => (b.onclick = () => set({ rec: b.dataset.rec })));
   let t; el.querySelector('#rq').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { set({ q: e.target.value }); const i = el.querySelector('#rq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
   el.querySelector('#rrec')?.addEventListener('change', (e) => set({ rec: e.target.value }));
+  el.querySelector('#rdoc').onchange = (e) => set({ doc: e.target.value });
   el.querySelector('#rprev')?.addEventListener('click', () => { f.pagina--; renderReclutamiento(el); window.scrollTo(0, 0); });
   el.querySelector('#rnext')?.addEventListener('click', () => { f.pagina++; renderReclutamiento(el); window.scrollTo(0, 0); });
   el.querySelectorAll('[data-open]').forEach((r) => (r.onclick = () => { const p = hashParams(); p.set('chofer', r.dataset.open); location.hash = `#/reclutamiento?${p}`; }));

@@ -424,7 +424,7 @@ async function importarReclutas(user, b) {
   const reclutador = String(b.reclutado_por || user.usuario);
   const u = (await db.send(new GetCommand({ TableName: T.usuarios, Key: { usuario: reclutador } }))).Item;
   if (!u) throw new HttpError(400, 'Reclutador no válido');
-  const todos = await scanAll(T.choferes, { ProjectionExpression: 'id, curp, celular, celular_alt, reclutado_por, notas, nombre' });
+  const todos = await scanAll(T.choferes, { ProjectionExpression: 'id, curp, celular, celular_alt, reclutado_por, notas, nombre, conduciendo_manual' });
   const porCurp = new Map(); const porCel = new Map();
   for (const c of todos) {
     if (c.curp) porCurp.set(String(c.curp).toUpperCase().trim(), c);
@@ -443,6 +443,9 @@ async function importarReclutas(user, b) {
       if (otro) res.yaTenianOtro++;
       const sets = ['conduciendo_manual = :cm', 'tiene_auto = :ta', 'actualizado_en = :ts', 'reclutado_en = if_not_exists(reclutado_en, :ts)'];
       const vals = { ...extra };
+      // combinar: si otro archivo ya lo marcó como conduciendo, no se regresa a esperando
+      if (b.combinar && ex.conduciendo_manual === true) vals[':cm'] = true;
+      if (r.hoja && !(b.combinar && ex.conduciendo_manual === true && !r.conduciendo)) { sets.push('hoja_equipo = :hj'); vals[':hj'] = String(r.hoja).slice(0, 60); }
       if (!ex.reclutado_por || b.reemplazar) { sets.push('reclutado_por = :rp'); vals[':rp'] = reclutador; }
       if (r.recuperado) { sets.push('recuperado = :rec'); vals[':rec'] = true; }
       if (r.notas && !ex.notas) { sets.push('notas = :n'); vals[':n'] = String(r.notas).slice(0, 2000); }
@@ -459,7 +462,7 @@ async function importarReclutas(user, b) {
       Item: {
         id, nombre, curp: curp || undefined, celular: cel.length === 10 ? '52' + cel : undefined, estatus_didi: 'Registrado por el equipo',
         fuentes: new Set(['reclutamiento']), reclutado_por: reclutador, reclutado_en: ts, conduciendo_manual: !!r.conduciendo,
-        recuperado: r.recuperado ? true : undefined, tiene_auto: extra[':ta'] || undefined, notas: r.notas ? String(r.notas).slice(0, 2000) : undefined,
+        recuperado: r.recuperado ? true : undefined, tiene_auto: extra[':ta'] || undefined, hoja_equipo: r.hoja ? String(r.hoja).slice(0, 60) : undefined, notas: r.notas ? String(r.notas).slice(0, 2000) : undefined,
         estatus_contacto: 'pendiente', contactos: 0, creado_en: ts, actualizado_en: ts,
       },
     })).then(() => { res.nuevos++; porCurp.set(curp, { id }); if (cel.length === 10) porCel.set(cel, { id }); })
@@ -494,6 +497,7 @@ async function actualizarChofer(user, id, body) {
   }
   if (body.notas !== undefined) { sets.push('notas = :n'); vals[':n'] = String(body.notas).slice(0, 2000); }
   if (body.celular_alt !== undefined) { sets.push('celular_alt = :c'); vals[':c'] = String(body.celular_alt).slice(0, 20); }
+  if (body.conduciendo_manual !== undefined) { sets.push('conduciendo_manual = :cmm'); vals[':cmm'] = !!body.conduciendo_manual; }
   if (body.reclutado_por !== undefined) {
     soloAdmin(user); // de esto depende el pago, solo el administrador lo corrige
     sets.push('reclutado_por = :rp', 'reclutado_en = if_not_exists(reclutado_en, :ts)'); vals[':rp'] = body.reclutado_por || null;
@@ -504,6 +508,9 @@ async function actualizarChofer(user, id, body) {
   })).catch((e) => { if (e.name === 'ConditionalCheckFailedException') throw new HttpError(404, 'Chofer no encontrado'); throw e; });
   if (body.estatus_contacto !== undefined) {
     await registrarEvento({ id, usuario: user, tipo: 'estatus', resultado: `Estatus → ${body.estatus_contacto}`, extra: { nombre: r.Attributes.nombre } });
+  }
+  if (body.conduciendo_manual !== undefined) {
+    await registrarEvento({ id, usuario: user, tipo: 'estatus', resultado: body.conduciendo_manual ? 'Movido a Conduciendo' : 'Regresado a Esperando estatus', extra: { nombre: r.Attributes.nombre } });
   }
   if (body.reclutado_por !== undefined) {
     await registrarEvento({ id, usuario: user, tipo: 'nota', resultado: body.reclutado_por ? `Reclutado por → ${body.reclutado_por}` : 'Se quitó quién lo reclutó', extra: { nombre: r.Attributes.nombre } });

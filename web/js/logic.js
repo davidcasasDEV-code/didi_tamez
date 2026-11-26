@@ -77,8 +77,12 @@ export function derivar(data) {
     // Reclutas: en registro (Conversión), dados de alta por el equipo, o nuevos conductores (Productividad de DiDi)
     // Reclutamiento = todo lo que no es la lista de 300: registro (Conversión), nuevos (Productividad), recuperados y altas del equipo
     if (!fuentes.has('asignados') || ch.reclutado_por) cats.add('recluta');
-    const conduce = !!(ch.conduciendo_manual || ch.activado_semana || /conductor activo|comeback driver|primer viaje/i.test(est));
+    // "Conduciendo" de un recluta lo define el equipo (pestaña "conduciendo" de su Excel o botón en el detalle).
+    // Si DiDi ya lo reporta activo pero el equipo aún no lo mueve, se avisa en Esperando → "Ya conduce según DiDi".
+    const conduceDidi = !!(ch.activado_semana || /conductor activo|comeback driver|primer viaje/i.test(est));
+    const conduce = ch.reclutado_por ? ch.conduciendo_manual === true : (ch.conduciendo_manual === true || conduceDidi);
     cats.add(conduce ? 'rec_conduciendo' : 'rec_esperando');
+    if (!conduce && conduceDidi) cats.add('didi_activo');
     if (fuentes.has('recuperacion') || ch.recuperado) cats.add('recuperado');
     if (ch.activado_semana) cats.add('activado');
 

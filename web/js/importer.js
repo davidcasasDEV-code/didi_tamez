@@ -93,9 +93,16 @@ function semanaDeFechas(fechas) {
  * WhatsApp/celular, carro/tiene auto, STATUS, EXCEL DIDI (SI / SI RECUPERADO) y columnas libres de notas.
  */
 function hojaEquipo(XLSX, ws, nombreHoja) {
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-  const hi = rows.findIndex((r, i) => i < 5 && r.some((c) => /^(name|nombre)$/.test(norm(c))) && r.some((c) => norm(c) === 'curp'));
-  if (hi < 0 || rows[hi].some((c) => /^id[ _]conductor$/.test(norm(c)))) return null;
+  let rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  let hi = rows.findIndex((r, i) => i < 5 && r.some((c) => /^(name|nombre)$/.test(norm(c))) && r.some((c) => norm(c) === 'curp'));
+  if (hi >= 0 && rows[hi].some((c) => /^id[ _]conductor$/.test(norm(c)))) return null;
+  if (hi < 0) {
+    // Hoja sin encabezados (p. ej. "esperando status" de Nilzhe): si la 2ª columna son CURPs, se asume Nombre | CURP | Celular | Carro | notas…
+    const datos = rows.filter((r) => String(r[0] ?? '').trim());
+    const curps = datos.filter((r) => /^[A-Z]{4}\d{6}[A-Z0-9]{8}$/i.test(String(r[1] ?? '').trim())).length;
+    if (!/esperando|conduc|aprobad|recluta/i.test(nombreHoja) || datos.length < 3 || curps < datos.length * 0.6) return null;
+    rows = [['nombre', 'curp', 'celular', 'carro'], ...rows]; hi = 0;
+  }
   const h = rows[hi].map(norm);
   const col = (re) => h.findIndex((x) => re.test(x));
   const iN = col(/^(name|nombre)$/), iC = col(/^curp$/), iT = col(/^(wha|whatsapp|celular|telefono|tel)$/), iA = col(/carro|auto/),
@@ -105,7 +112,7 @@ function hojaEquipo(XLSX, ws, nombreHoja) {
   const filas = rows.slice(hi + 1).filter((r) => String(r[iN] ?? '').trim()).map((r) => {
     const auto = iA >= 0 ? String(r[iA] ?? '').trim() : '';
     const libres = r.map((v, i) => (!conocidas.has(i) && h[i] !== 'total' && !/^\d+$/.test(String(v).trim()) ? String(v ?? '').trim() : '')).filter(Boolean);
-    const notas = [auto && !/^s[ií]$|^no$/i.test(auto) ? `Auto: ${auto}` : '', ...libres].filter(Boolean).join(' · ');
+    const notas = [/sin carro/i.test(nombreHoja) ? 'Aprobado sin carro' : '', auto && !/^s[ií]s?$|^no$/i.test(auto) ? `Auto: ${auto}` : '', ...libres.filter((x) => !/^s[ií]s?$/i.test(x))].filter(Boolean).join(' · ');
     const status = iS >= 0 ? String(r[iS] ?? '') : '';
     return {
       nombre: String(r[iN]).trim(), curp: iC >= 0 ? String(r[iC] ?? '').trim().toUpperCase() : '',
@@ -113,6 +120,7 @@ function hojaEquipo(XLSX, ws, nombreHoja) {
       tiene_auto: auto || undefined, notas: notas || undefined,
       conduciendo: hojaConduce || /conduc/i.test(status),
       recuperado: iD >= 0 && /recuper/i.test(String(r[iD] ?? '')),
+      hoja: nombreHoja.trim(),
     };
   });
   return filas.length ? { tipo: 'reclutas', hoja: nombreHoja, filas, total: filas.length, conduciendo: hojaConduce } : null;

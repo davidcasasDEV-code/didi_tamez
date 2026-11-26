@@ -96,6 +96,13 @@ function pintar(dr, d) {
         ${esAdmin() ? `<select class="input" id="drec"><option value="">— Sin registrar —</option>${S.data.usuarios.map((u) => `<option value="${esc(u.usuario)}" ${c.reclutado_por === u.usuario ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select>`
           : `<div style="min-height:24px"><b>${esc(c.reclutado_por ? usuarioNombre(c.reclutado_por) : 'Sin registrar')}</b>${c.reclutado_por ? '' : ' <span class="small muted">(regístralo en Reclutamiento → Nuevo recluta)</span>'}</div>`}
       </label>` : ''}
+      ${c.reclutado_por ? `<div class="row" style="margin-top:10px">
+        <span class="badge ${d.cats.has('rec_conduciendo') ? 'b-ok' : 'b-warn'}">${d.cats.has('rec_conduciendo') ? 'Conduciendo' : 'Esperando estatus'}</span>
+        ${c.hoja_equipo ? `<span class="small muted">Pestaña de su Excel: “${esc(c.hoja_equipo)}”</span>` : ''}
+        ${d.cats.has('didi_activo') ? '<span class="badge b-brand">DiDi ya lo reporta activo</span>' : ''}
+        <span class="spacer"></span>
+        <button class="btn sm" id="dcond">${d.cats.has('rec_conduciendo') ? 'Regresar a Esperando' : 'Mover a Conduciendo'}</button>
+      </div>` : ''}
       <label class="field" style="margin-top:10px">Notas del chofer (visibles para todo el equipo)
         <textarea class="input" id="dnotas" rows="2" placeholder="Ej. prefiere que le llamen en la tarde">${esc(c.notas || '')}</textarea></label>
       <label class="field" style="margin-top:10px">Celular alterno (si DiDi no lo trae o cambió de número)
@@ -148,6 +155,8 @@ function pintar(dr, d) {
     try { await api('/choferes/asignar', { method: 'POST', body: { ids: [c.id], usuario: S.yo.usuario } }); toast('Ahora este chofer es tuyo'); await recargar(); }
     catch (err) { toast(err.message, { tipo: 'err' }); }
   });
+  dr.querySelector('#dcond')?.addEventListener('click', () => patch(c.id, { conduciendo_manual: !d.cats.has('rec_conduciendo') },
+    d.cats.has('rec_conduciendo') ? 'Regresado a Esperando estatus' : 'Movido a Conduciendo'));
   dr.querySelector('#drec')?.addEventListener('change', (e) => patch(c.id, { reclutado_por: e.target.value || null }, 'Reclutador actualizado'));
   dr.querySelector('#dest').onchange = (e) => patch(c.id, { estatus_contacto: e.target.value }, 'Estatus actualizado');
   const notas = dr.querySelector('#dnotas');
