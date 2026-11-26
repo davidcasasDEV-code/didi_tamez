@@ -35,10 +35,12 @@ crear_tabla Config     "AttributeName=clave,KeyType=HASH"   "AttributeName=clave
 crear_tabla Seguimiento "AttributeName=id,KeyType=HASH AttributeName=ts,KeyType=RANGE" \
   "AttributeName=id,AttributeType=S AttributeName=ts,AttributeType=S AttributeName=gpk,AttributeType=S" \
   "--global-secondary-indexes IndexName=Feed,KeySchema=[{AttributeName=gpk,KeyType=HASH},{AttributeName=ts,KeyType=RANGE}],Projection={ProjectionType=ALL}"
-for t in Usuarios Choferes Semanas Plantillas Config Seguimiento; do
+# Mensajes de WhatsApp (API oficial): id = chofer (o "WAMID#<id>" para ubicar un mensaje por su id de Meta), ts = fecha
+crear_tabla Mensajes   "AttributeName=id,KeyType=HASH AttributeName=ts,KeyType=RANGE"                        "AttributeName=id,AttributeType=S AttributeName=ts,AttributeType=S"
+for t in Usuarios Choferes Semanas Plantillas Config Seguimiento Mensajes; do
   aws dynamodb wait table-exists --table-name "${PROYECTO}_$t" --region "$REGION"; done
 # Respaldo continuo (PITR) en las tablas con trabajo humano: permite restaurar a cualquier punto de los últimos 35 días.
-for t in Usuarios Choferes Seguimiento Plantillas; do
+for t in Usuarios Choferes Seguimiento Plantillas Mensajes; do
   aws dynamodb update-continuous-backups --region "$REGION" --table-name "${PROYECTO}_$t" \
     --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true >/dev/null; done
 
@@ -56,6 +58,11 @@ aws iam put-role-policy --role-name "$ROLE" --policy-name "${PROYECTO}_DynamoDB"
               \"dynamodb:Query\",\"dynamodb:Scan\",\"dynamodb:BatchWriteItem\",\"dynamodb:BatchGetItem\"],
   \"Resource\":[\"arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/${PROYECTO}_*\",
                 \"arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/${PROYECTO}_*/index/*\"]}]}"
+# Secretos de WhatsApp (token y app secret) en SSM Parameter Store, cifrados (SecureString, sin costo)
+aws iam put-role-policy --role-name "$ROLE" --policy-name "${PROYECTO}_SSM" --policy-document "{
+  \"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",
+  \"Action\":[\"ssm:GetParameter\",\"ssm:PutParameter\"],
+  \"Resource\":\"arn:aws:ssm:${REGION}:${ACCOUNT}:parameter/${PROYECTO}/*\"}]}"
 ROLE_ARN=$(aws iam get-role --role-name "$ROLE" --query Role.Arn --output text)
 
 # ------------------------------------------------------------------ Lambda
@@ -64,7 +71,7 @@ mkdir -p "$HERE/.build"; TMPZIP="$HERE/.build/api.zip"; command -v cygpath >/dev
 (cd "$HERE/../backend" && node -e "
 const fs=require('fs'),zlib=require('zlib');
 // zip mínimo sin dependencias (método store)
-const files=['index.mjs','defaults.mjs'];const parts=[],central=[];let off=0;
+const files=['index.mjs','defaults.mjs','whatsapp.mjs'];const parts=[],central=[];let off=0;
 const crcT=new Int32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;return c;});
 const crc=b=>{let c=-1;for(const x of b)c=crcT[(c^x)&255]^(c>>>8);return (c^-1)>>>0;};
 for(const f of files){const d=fs.readFileSync(f),n=Buffer.from(f),c=crc(d),z=zlib.deflateRawSync(d);

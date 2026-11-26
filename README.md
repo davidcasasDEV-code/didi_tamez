@@ -51,6 +51,7 @@ Un solo segmento por conductor (A > B > C). Solo aplica a choferes en operación
 * **Permisos**: el reclutador solo ve en Asignaciones (y en Inicio/Actividad) los choferes que tiene asignados; el servidor ni siquiera le envía los demás y bloquea ver o registrar contactos de choferes ajenos. La base de Reclutamiento la ve todo el equipo. Solo el administrador asigna/reparte.
 * **Importar**: todo el equipo puede importar los Excel de DiDi y su Excel de reclutas (un reclutador importa a su nombre y no toca reclutas de otros).
 * **Editar / Eliminar**: desde el detalle. Editar (nombre, celular, CURP, ciudad, auto) lo puede hacer quien ve al chofer; eliminar: el admin cualquiera, el reclutador solo sus reclutas. Si DiDi vuelve a mandar a la persona, reaparece.
+* **WhatsApp Business API (oficial)**: módulo backend/whatsapp.mjs. Envío de plantillas aprobadas por Meta (uno o en lote, con límite diario por persona), mensajes libres dentro de la ventana de 24 h, webhook /api/whatsapp/webhook (firma X-Hub-Signature-256) que guarda respuestas en la tabla Mensajes y marca SÍ/NO. Bandeja en el portal (Mensajes). Token y App Secret en SSM (/DIDI_Choferes_Tamez/whatsapp/*, SecureString); el resto en Config "whatsapp". Alta en Meta: docs/Alta WhatsApp Business API - paso a paso.md. Aviso de privacidad para la app de Meta: /privacidad.html.
 * **Anexo D**: se sube en Administración (S3 `docs/`, URL con versión) y entra en la bienvenida con `{liga_anexo_d}`.
 
 ## Excel soportados (se detectan solos)

@@ -5,6 +5,8 @@ import { derivar } from './logic.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderChoferes } from './views/choferes.js';
 import { renderReclutamiento } from './views/reclutamiento.js';
+import { renderMensajes } from './views/mensajes.js';
+import { cargarEstadoWa } from './wa.js';
 import { renderActividad } from './views/actividad.js';
 import { renderImportar } from './views/importar.js';
 import { renderAdmin } from './views/admin.js';
@@ -27,6 +29,7 @@ const VISTAS = {
   dashboard: { label: 'Inicio', icon: 'home', render: renderDashboard },
   choferes: { label: 'Asignaciones', corto: 'Asignados', icon: 'car', render: renderChoferes },
   reclutamiento: { label: 'Reclutamiento', corto: 'Reclutas', icon: 'users', render: renderReclutamiento },
+  mensajes: { label: 'Mensajes', corto: 'Mensajes', icon: 'wa', render: renderMensajes },
   actividad: { label: 'Actividad', icon: 'pulse', render: renderActividad },
   importar: { label: 'Importar', icon: 'upload', render: renderImportar }, // todo el equipo puede importar los Excel de DiDi
   admin: { label: 'Administración', corto: 'Admin', icon: 'gear', render: renderAdmin, admin: true },
@@ -41,6 +44,7 @@ export async function cargar({ silencioso = false } = {}) {
   const data = await api('/bootstrap');
   S.data = data; S.yo = data.yo; S.version = data.version; S.sincronizado = new Date();
   S.d = derivar(data);
+  await cargarEstadoWa();
   if (!silencioso) render(); else rerender();
 }
 /** Recarga tras una acción propia, conservando la vista. */
@@ -111,6 +115,10 @@ function navHtml(clase) {
   const v = vistaActual();
   return Object.entries(VISTAS).filter(([, x]) => !x.admin || esAdmin()).map(([k, x]) => {
     let badge = '';
+    if (k === 'mensajes') {
+      const n = [...S.d.values()].filter((d) => d.ch.wa_no_leidos > 0).length;
+      if (n) badge = `<span class="badge b-brand">${n}</span>`;
+    }
     if (k === 'choferes') {
       const mios = [...S.d.values()].filter((d) => d.ch.asignado_a === S.yo.usuario && d.seg && !d.contactadoSemana).length;
       if (mios) badge = `<span class="badge b-brand">${mios}</span>`;

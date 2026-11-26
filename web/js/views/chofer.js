@@ -5,6 +5,7 @@ import { esc, icon, fmtNum, fmtMoney, fmtFecha, celBonito, telLink, waLink, toas
 import { ESTATUS_CONTACTO, SEGMENTOS, semanaLabel, variables, llenar, sugerida, VARIABLES_DISPONIBLES } from '../logic.js';
 import { segHtml, estatusHtml } from './choferes.js';
 import { eventoHtml } from './actividad.js';
+import { waListo, componerWa } from '../wa.js';
 
 let abiertoId = null;
 const RESULTADOS = ['Respondió SÍ (quiere el soporte)', 'Respondió NO (no quiere el soporte)', 'Respondió', 'Se queda', 'Se quiere ir · se mandó liga de salida', 'Sin respuesta', 'Número equivocado', 'Buzón / no contesta', 'Otro trabajo', 'No le entran viajes', 'Tarifas', 'Beneficios', 'Agendó visita a oficina', 'Subirá documentos', 'Ya subió documentos', 'Problema con la app', 'Otro'];
@@ -57,9 +58,10 @@ function pintar(dr, d) {
       <button class="btn icon ghost" id="dx" title="Cerrar">${icon('x')}</button>
     </div>
     ${c.cel ? `<div class="row" style="margin-top:10px">
-      <button class="btn wa" id="dwa">${icon('wa')} Plantillas WhatsApp</button>
+      <button class="btn wa" id="dwa">${icon('wa')} ${waListo() ? 'Enviar WhatsApp' : 'Plantillas WhatsApp'}</button>
+      ${waListo() && c.wa_ultimo ? `<a class="btn" href="#/mensajes?c=${encodeURIComponent(c.id)}">Ver chat${c.wa_no_leidos > 0 ? ` <span class="badge b-brand">${c.wa_no_leidos}</span>` : ''}</a>` : ''}
       <a class="btn" href="${telLink(c.cel)}" id="dtel">${icon('phone')} Llamar</a>
-      <a class="btn" href="${waLink(c.cel)}" target="_blank" rel="noopener" id="dchat">Abrir chat</a>
+      <a class="btn" href="${waLink(c.cel)}" target="_blank" rel="noopener" id="dchat">${waListo() ? 'Abrir en mi WhatsApp' : 'Abrir chat'}</a>
     </div>` : '<div class="small" style="margin-top:8px;color:var(--warn)">DiDi no envió celular para esta persona. Agrégalo abajo en “Celular alterno” para poder contactarla.</div>'}
   </div>
   <div class="drawer-b">
@@ -239,7 +241,12 @@ export async function seguimiento(id, body) {
 }
 
 // ---------------------------------------------------------------- plantillas
+/** Con la API de WhatsApp conectada se envía desde el número de Autos Tamez; si no, se abre el WhatsApp propio (wa.me). */
 export function abrirPlantillas(id) {
+  if (waListo()) return componerWa(id);
+  return abrirPlantillasManual(id);
+}
+export function abrirPlantillasManual(id) {
   const d = S.d.get(id); if (!d) return;
   if (!d.ch.cel) { toast('Este chofer no tiene celular; agrégalo en su detalle', { tipo: 'err' }); return; }
   const pls = S.data.plantillas; if (!pls.length) { toast('No hay plantillas configuradas', { tipo: 'err' }); return; }

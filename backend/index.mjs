@@ -6,6 +6,7 @@ import {
   ScanCommand, QueryCommand, BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { crearWhatsApp } from './whatsapp.mjs';
 import crypto from 'node:crypto';
 import { DEFAULT_PLANTILLAS, DEFAULT_UMBRALES } from './defaults.mjs';
 
@@ -21,6 +22,7 @@ const T = {
   seguimiento: P + 'Seguimiento',
   plantillas: P + 'Plantillas',
   config: P + 'Config',
+  mensajes: P + 'Mensajes',
 };
 const SEMANAS_A_CONSERVAR = 3;
 const TOKEN_HORAS = 12;
@@ -703,6 +705,12 @@ async function guardarPlantilla(user, id, b) {
 }
 
 // ---------------------------------------------------------------- router
+let wa;
+const whatsapp = () => (wa ||= crearWhatsApp({
+  db, T, cmd: { GetCommand, PutCommand, UpdateCommand }, HttpError, nowIso, getConfig, putConfig, bumpVersion,
+  registrarEvento, scanAll, queryAll, soloAdmin: (u) => soloAdmin(u), choferVisible, soloDigitos,
+}));
+
 async function route(event) {
   const method = event.requestContext?.http?.method || 'GET';
   const path = (event.rawPath || '/').replace(/^\/api/, '') || '/';
@@ -734,7 +742,14 @@ async function route(event) {
   if (method === 'GET' && path === '/salud') return { ok: true, ts: nowIso() };
 
   // ---- privadas
+  // WhatsApp: el webhook de Meta no trae sesión (se valida con la firma); lo demás sí.
+  const raw = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString() : event.body) : '';
+  if (path === '/whatsapp/webhook') return whatsapp().ruta(event, method, path, q, null, raw, PORTAL_URL);
   const user = await auth(event);
+  if (path.startsWith('/whatsapp/')) {
+    const r = await whatsapp().ruta(event, method, path, q, user, raw, PORTAL_URL);
+    if (r !== undefined) return r;
+  }
   if (method === 'GET' && path === '/version') return { version: (await getConfig('version')) || 0 };
   if (method === 'GET' && path === '/bootstrap') { await asegurarPlantillas(); return bootstrap(user); }
   if (method === 'GET' && path === '/actividad') return actividad(user, q.limit, q.desde);
@@ -796,6 +811,7 @@ export const handler = async (event) => {
   const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
   try {
     const data = await route(event);
+    if (data && typeof data.raw === 'string') return { statusCode: 200, headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' }, body: data.raw };
     return { statusCode: 200, headers, body: JSON.stringify(data) };
   } catch (e) {
     const status = e.status || 500;

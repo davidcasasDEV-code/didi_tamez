@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { esc, icon, fmtNum, fmtMoney, celBonito, telLink, avatar, hace, toast, modal, confirmar, cargarXLSX, titulo, colorDe, iniciales } from '../util.js';
 import { ESTATUS_CONTACTO, SEGMENTOS, semanaLabel, inicioSemana } from '../logic.js';
 import { abrirPlantillas } from './chofer.js';
+import { waListo, enviarLote } from '../wa.js';
 
 const POR_PAGINA = 100;
 const SEG_ORD = { A: 0, B: 1, C: 2 };
@@ -117,6 +118,7 @@ export function renderChoferes(el) {
       <button class="btn sm primary" id="brep">${icon('split')} Repartir entre…</button>
       <button class="btn sm" id="blib">Quitar asignación</button>`
     : ''}
+    ${waListo() ? `<button class="btn sm wa" id="bwa">${icon('wa')} Enviar WhatsApp</button>` : ''}
     <button class="btn sm" id="bclr">${icon('x')}</button>
   </div>` : `<div class="row small muted" style="margin-bottom:10px">
     ${esAdmin() ? `<span>Tip: selecciona por renglón del Excel (p. ej. 1 al 150) y luego "Asignar a…".</span>
@@ -126,7 +128,7 @@ export function renderChoferes(el) {
   ${lista.length ? `
   <div class="table-wrap table-desktop"><table class="t">
     <thead><tr>
-      ${esAdmin() ? `<th style="width:34px"><input type="checkbox" id="chkall" ${todosSel ? 'checked' : ''} title="Seleccionar página"></th>` : ''}
+      ${esAdmin() || waListo() ? `<th style="width:34px"><input type="checkbox" id="chkall" ${todosSel ? 'checked' : ''} title="Seleccionar página"></th>` : ''}
       <th>Chofer</th><th>Seg.</th><th class="num">Viajes</th><th class="num">Horas</th><th class="num">Ingreso</th>
       <th>Estatus DiDi</th><th>Asignado</th><th>Contacto</th><th style="width:96px"></th>
     </tr></thead>
@@ -164,6 +166,7 @@ export function renderChoferes(el) {
     if (conOrden.length) f.orden = 'excel';
     toast(`${elegidos.length} chofer(es) seleccionados (renglones ${de}–${al}). Ahora elige "Asignar a…".`); rer();
   });
+  el.querySelector('#bwa')?.addEventListener('click', () => enviarLote([...sel], { alTerminar: () => sel.clear() }));
   el.querySelector('#bdidi').onclick = () => exportarFormatoDidi(lista);
   el.querySelectorAll('[data-chk]').forEach((c) => {
     c.onclick = (e) => e.stopPropagation();
@@ -198,7 +201,7 @@ function abrir(id) {
 function filaHtml(d) {
   const c = d.ch; const sel = S.ui.sel.has(c.id);
   return `<tr data-open="${esc(c.id)}" class="${sel ? 'sel' : ''}">
-    ${esAdmin() ? `<td><input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''}></td>` : ''}
+    ${esAdmin() || waListo() ? `<td><input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''}></td>` : ''}
     <td class="name-cell"><b>${c.orden_lista ? `<span class="muted small">#${c.orden_lista}</span> ` : ''}${esc(titulo(c.nombre || '(sin nombre)'))}</b><span>${esc(celBonito(c.cel))} · ${c.bienvenida_enviada ? '<span style="color:var(--ok)">bienvenida ✓</span>' : '<span style="color:var(--warn)">sin bienvenida</span>'}</span></td>
     <td>${segHtml(d)}</td>
     <td class="num nowrap"><b>${d.m0 ? fmtNum(d.m0.viajes) : '—'}</b> ${trendHtml(d.trend.viajes)}</td>
@@ -215,7 +218,7 @@ function cardHtml(d) {
   const c = d.ch; const sel = S.ui.sel.has(c.id);
   return `<div class="mcard ${sel ? 'sel' : ''}" data-open="${esc(c.id)}">
     <div class="top">
-      ${esAdmin() ? `<input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''} style="margin-top:4px;width:18px;height:18px;accent-color:var(--brand)">` : ''}
+      ${esAdmin() || waListo() ? `<input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''} style="margin-top:4px;width:18px;height:18px;accent-color:var(--brand)">` : ''}
       <div style="flex:1;min-width:0"><b>${esc(titulo(c.nombre || '(sin nombre)'))}</b><div class="small muted">${esc(celBonito(c.cel))} · ${esc(c.estatus_didi || '')}</div></div>
       ${segHtml(d)}
     </div>

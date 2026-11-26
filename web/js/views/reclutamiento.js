@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { esc, icon, fmtNum, celBonito, telLink, hace, toast, modal, cargarXLSX, titulo, colorDe, iniciales, confirmar } from '../util.js';
 import { semanaLabel, DOC_LABEL, partesRecluta, enEquipo } from '../logic.js';
 import { abrirPlantillas } from './chofer.js';
+import { waListo, enviarLote } from '../wa.js';
 import { estatusHtml } from './choferes.js';
 
 const POR_PAGINA = 100;
@@ -92,7 +93,8 @@ export function renderReclutamiento(el) {
   const pag = arr.slice(f.pagina * POR_PAGINA, (f.pagina + 1) * POR_PAGINA);
   const usuarios = S.data.usuarios;
   const sel = (S.ui.recSel ||= new Set());
-  const seleccionable = esAdmin() && f.parte === 'didi';
+  const asignarRec = esAdmin() && f.parte === 'didi';
+  const seleccionable = asignarRec || waListo();
 
   // Activaciones por reclutador y semana (base para el pago)
   const reclutados = todos.filter((d) => d.ch.reclutado_por);
@@ -147,7 +149,8 @@ export function renderReclutamiento(el) {
   </div>
 
   ${seleccionable && sel.size ? `<div class="bulkbar"><b>${sel.size} seleccionado(s)</b><span class="spacer"></span>
-    <select class="input" id="rasig" style="width:auto;padding:6px 10px"><option value="">Marcar como reclutados por…</option>${usuarios.filter((u) => u.activo).map((u) => `<option value="${esc(u.usuario)}">${esc(u.nombre)}</option>`).join('')}</select>
+    ${asignarRec ? `<select class="input" id="rasig" style="width:auto;padding:6px 10px"><option value="">Marcar como reclutados por…</option>${usuarios.filter((u) => u.activo).map((u) => `<option value="${esc(u.usuario)}">${esc(u.nombre)}</option>`).join('')}</select>` : ''}
+    ${waListo() ? `<button class="btn sm wa" id="rwa">${icon('wa')} Enviar WhatsApp</button>` : ''}
     <button class="btn sm" id="rclr">${icon('x')}</button></div>`
   : f.parte === 'didi' ? `<div class="small muted" style="margin-bottom:10px">Si alguno es tuyo o de tu equipo, ábrelo y marca quién lo reclutó${esAdmin() ? ' (o selecciona varios)' : ' (o regístralo con “+ Nuevo recluta”)'}. Así pasa a Esperando estatus o Conduciendo.</div>` : ''}
 
@@ -194,6 +197,7 @@ export function renderReclutamiento(el) {
   el.querySelectorAll('[data-stop]').forEach((b) => (b.onclick = (e) => e.stopPropagation()));
   el.querySelectorAll('[data-chk]').forEach((c) => { c.onclick = (e) => e.stopPropagation(); c.onchange = () => { c.checked ? sel.add(c.dataset.chk) : sel.delete(c.dataset.chk); renderReclutamiento(el); }; });
   el.querySelector('#rall')?.addEventListener('change', (e) => { pag.forEach((d) => (e.target.checked ? sel.add(d.ch.id) : sel.delete(d.ch.id))); renderReclutamiento(el); });
+  el.querySelector('#rwa')?.addEventListener('click', () => enviarLote([...sel], { alTerminar: () => sel.clear() }));
   el.querySelector('#rclr')?.addEventListener('click', () => { sel.clear(); renderReclutamiento(el); });
   el.querySelector('#rasig')?.addEventListener('change', async (e) => {
     const u = e.target.value; if (!u) return;

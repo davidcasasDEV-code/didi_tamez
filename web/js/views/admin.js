@@ -3,6 +3,7 @@ import { S, recargar } from '../app.js';
 import { api } from '../api.js';
 import { esc, icon, avatar, toast, modal, confirmar, fmtFecha } from '../util.js';
 import { VARIABLES_DISPONIBLES, llenar, variables, SEGMENTOS } from '../logic.js';
+import { waCardHtml, waCardEventos } from './admin_wa.js';
 
 const CATEGORIAS = [['bienvenida', 'Bienvenida'], ['A', 'Segmento A'], ['B', 'Segmento B'], ['C', 'Segmento C'], ['seguimiento', 'Seguimiento'], ['documentos', 'Documentos'], ['recuperacion', 'Recuperación'], ['salida', 'Salida (opt-out)'], ['general', 'General']];
 
@@ -35,6 +36,7 @@ export function renderAdmin(el) {
       </form>
     </div>
   </div>
+  <div class="card" style="margin-bottom:14px" id="wacard">${waCardHtml()}</div>
   <div class="card" style="margin-bottom:14px">
     <div class="card-h"><h2 style="flex:1">Anexo D · Aviso de Privacidad</h2>
       <label class="btn sm primary">${icon('upload')} ${S.data.ajustes?.anexo_d ? 'Reemplazar archivo' : 'Subir archivo'}<input type="file" id="anexo" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" hidden></label></div>
@@ -53,6 +55,7 @@ export function renderAdmin(el) {
   </div>`;
 
   el.querySelector('#nuevoU').onclick = () => editarUsuario(null);
+  waCardEventos(el);
   el.querySelector('#anexo').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     if (file.size > 4 * 1024 * 1024) return toast('El archivo debe pesar menos de 4 MB', { tipo: 'err' });
