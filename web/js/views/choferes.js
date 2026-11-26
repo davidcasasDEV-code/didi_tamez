@@ -7,8 +7,8 @@ import { abrirPlantillas } from './chofer.js';
 
 const POR_PAGINA = 100;
 const SEG_ORD = { A: 0, B: 1, C: 2 };
-// Asignaciones = choferes que ya conducen. Los reclutas en proceso viven en la sección Reclutamiento.
-const CATS = [['prioridad', 'Prioridad A/B/C'], ['recuperacion', 'Recuperación'], ['todos', 'Todos']];
+// Asignaciones = choferes de la lista de DiDi. Los reclutas en proceso viven en la sección Reclutamiento.
+const CATS = [['prioridad', 'Prioridad A/B/C'], ['todos', 'Todos']];
 
 function filtrosDefault() {
   return { cat: esAdmin() ? 'todos' : 'prioridad', q: '', seg: '', asignado: esAdmin() ? '' : S.yo.usuario, contacto: '', orden: 'prioridad' };
@@ -18,9 +18,9 @@ export function filtrar(f = S.ui.filtros) {
   const q = f.q.trim().toLowerCase();
   const qd = q.replace(/\D/g, '');
   let arr = [...S.d.values()].filter((d) => {
-    if (!d.cats.has(f.universo || 'conduciendo')) return false;
+    if (!d.cats.has(f.universo || 'asignacion')) return false;
     // Un reclutador solo ve en Asignaciones los choferes que tiene asignados
-    if ((f.universo || 'conduciendo') === 'conduciendo' && !esAdmin() && d.ch.asignado_a !== S.yo.usuario) return false;
+    if ((f.universo || 'asignacion') === 'asignacion' && !esAdmin() && d.ch.asignado_a !== S.yo.usuario) return false;
     if (f.cat !== 'todos' && !d.cats.has(f.cat)) return false;
     if (f.reclutado === '_none' && d.ch.reclutado_por) return false;
     if (f.reclutado && f.reclutado !== '_none' && d.ch.reclutado_por !== f.reclutado) return false;
@@ -81,7 +81,7 @@ export function renderChoferes(el) {
 
   el.innerHTML = `
   <div class="topbar">
-    <div><h1>Asignaciones</h1><div class="muted">${esAdmin() ? `${fmtNum(lista.length)} de ${fmtNum(todos.filter((d) => d.cats.has('conduciendo')).length)} choferes que ya conducen` : `${fmtNum(lista.length)} de tus ${fmtNum(todos.filter((d) => d.cats.has('conduciendo') && d.ch.asignado_a === S.yo.usuario).length)} choferes asignados`} · semanas ${S.data.semanas.map(semanaLabel).join(', ') || '—'}</div></div>
+    <div><h1>Asignaciones</h1><div class="muted">${esAdmin() ? `${fmtNum(lista.length)} de ${fmtNum(todos.filter((d) => d.cats.has('asignacion')).length)} choferes que ya conducen` : `${fmtNum(lista.length)} de tus ${fmtNum(todos.filter((d) => d.cats.has('asignacion') && d.ch.asignado_a === S.yo.usuario).length)} choferes asignados`} · semanas ${S.data.semanas.map(semanaLabel).join(', ') || '—'}</div></div>
     <div class="spacer"></div>
     <button class="btn" id="bdidi" title="Mismo formato que la lista de DiDi, con Contactado y Lunes–Viernes llenos desde el historial">${icon('down')} Formato DiDi (semana)</button>
     <button class="btn" id="bexp">${icon('down')} Exportar Excel</button>

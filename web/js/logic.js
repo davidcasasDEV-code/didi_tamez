@@ -54,7 +54,7 @@ export function derivar(data) {
 
     // Segmento (prioridad A > B > C). Solo para choferes en operación (lista de asignados o productividad).
     let seg = null;
-    if (m0 && ['asignados', 'productividad'].includes(m0.fuente) && !bloqueado) {
+    if (m0 && m0.fuente === 'asignados' && !bloqueado) {
       const v = +m0.viajes || 0; const t0 = +m0.tsh || 0; const t1 = m1 ? +m1.tsh || 0 : 0;
       if (v === 0) seg = 'A';
       else if (v < u.b_viajes_max || (t1 > 0 && t0 <= t1 * (1 - u.b_caida_tsh_pct / 100))) seg = 'B';
@@ -72,9 +72,14 @@ export function derivar(data) {
     if (docs.length && !bloqueado) cats.add('documentos');
     if (fuentes.has('recuperacion') && /comeback/i.test(est)) cats.add('recuperacion');
     // Dos universos: los que ya conducen (Asignaciones) y los reclutas en proceso (Reclutamiento)
-    if (['asignados', 'productividad', 'recuperacion'].some((f) => fuentes.has(f))) cats.add('conduciendo');
+    // Asignaciones = solo la lista de conductores asignados que manda DiDi (los 300)
+    if (fuentes.has('asignados')) cats.add('asignacion');
     // Reclutas: en registro (Conversión), dados de alta por el equipo, o nuevos conductores (Productividad de DiDi)
-    if (fuentes.has('conversion') || fuentes.has('reclutamiento') || fuentes.has('productividad') || ch.reclutado_por) cats.add('recluta');
+    // Reclutamiento = todo lo que no es la lista de 300: registro (Conversión), nuevos (Productividad), recuperados y altas del equipo
+    if (!fuentes.has('asignados') || ch.reclutado_por) cats.add('recluta');
+    const conduce = !!(ch.conduciendo_manual || ch.activado_semana || /conductor activo|comeback driver|primer viaje/i.test(est));
+    cats.add(conduce ? 'rec_conduciendo' : 'rec_esperando');
+    if (fuentes.has('recuperacion') || ch.recuperado) cats.add('recuperado');
     if (ch.activado_semana) cats.add('activado');
 
     const contactadoSemana = !!(ch.ultimo_contacto?.fecha && ch.ultimo_contacto.fecha >= lunes);
@@ -120,7 +125,7 @@ export function sugerida(d, plantillas) {
   const by = (cat) => plantillas.find((p) => p.categoria === cat);
   // La bienvenida + Anexo D se manda una sola vez por chofer
   if (!d.ch.bienvenida_enviada) return by('bienvenida') || plantillas[0];
-  if (d.cats.has('recluta') && !d.cats.has('conduciendo') && d.docs.length) return by('documentos') || plantillas[0];
+  if (d.cats.has('recluta') && !d.cats.has('asignacion') && d.docs.length) return by('documentos') || plantillas[0];
   if (d.seg) return by(d.seg) || plantillas[0];
   if (d.cats.has('documentos')) return by('documentos') || plantillas[0];
   if (d.cats.has('recuperacion')) return by('recuperacion') || plantillas[0];

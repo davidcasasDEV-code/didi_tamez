@@ -41,10 +41,10 @@ Un solo segmento por conductor (A > B > C). Solo aplica a choferes en operación
 
 ## Secciones
 
-* **Asignaciones**: choferes que ya conducen (lista de asignados, productividad, recuperación). Selección por renglón del
+* **Asignaciones**: SOLO la lista semanal de conductores asignados que manda DiDi (los 300). Selección por renglón del
   Excel ("del 1 al 150") para repartir, bienvenida + Anexo D marcada una sola vez, y exportación **Formato DiDi (semana)**
   con *Contactado o no?* y Lunes–Viernes llenos desde el historial.
-* **Reclutamiento**: todos los reclutas (Conversión, Productividad y altas del equipo) con quién los reclutó, documentos,
+* **Reclutamiento**: la base de reclutas del equipo en tres partes: *Esperando estatus*, *Conduciendo* (primer viaje / activo / comeback / marcado en su Excel) y *En DiDi sin reclutador*. Fuentes: Conversión, Productividad, Recuperación del Dashboard DiDi + Excel propio del equipo (hojas "esperando status"/"conduciendo", importable; empata por CURP/celular, idempotente) con quién los reclutó, documentos,
   y **activados por reclutador** (para pago). Activado = primer viaje; la semana es la de la fecha de primer viaje de DiDi.
   Las altas manuales usan id `CURP-…`/`TEL-…` y se **fusionan** solas cuando DiDi manda a esa persona con su ID
   (empate por CURP o celular; se heredan reclutador, notas, asignación e historial). Solo el admin cambia "reclutado por".

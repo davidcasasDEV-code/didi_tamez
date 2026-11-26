@@ -26,7 +26,7 @@ export function renderImportar(el) {
     <div class="card"><h2>Semanas en la base</h2>
       <div class="row" style="margin:8px 0 14px">${S.data.semanas.length ? S.data.semanas.map((w, i) => `<span class="badge ${i === 0 ? 'b-brand' : ''}">${semanaLabel(w)} · ${w.slice(0, 4)}</span>`).join('') : '<span class="muted">Ninguna todavía</span>'}</div>
       <h3 style="margin-bottom:8px">Últimas importaciones</h3>
-      <div class="grid small">${hist.length ? hist.slice(0, 12).map((h) => `<div><b>${esc(h.archivo || h.tipo)}</b> <span class="badge">${semanaLabel(h.semana)}</span>
+      <div class="grid small">${hist.length ? hist.slice(0, 12).map((h) => `<div><b>${esc(h.archivo || h.tipo)}</b> <span class="badge">${h.tipo === 'reclutas' ? 'Reclutas' : semanaLabel(h.semana)}</span>
         <div class="muted">${esc(h.usuario)} · ${fmtFecha(h.fecha, true)} · ${h.resumen?.nuevos ?? 0} nuevos, ${h.resumen?.actualizados ?? 0} actualizados${h.depuradas?.length ? ` · depuró ${h.depuradas.map(semanaLabel).join(', ')}` : ''}</div></div>`).join('') : '<span class="muted">Aún no hay importaciones.</span>'}</div>
     </div>
   </div>`;
@@ -56,7 +56,19 @@ function pintarPrevia(el) {
   const top3 = S.data.semanas.slice(0, 3);
   prev.innerHTML = `<div class="card">
     <div class="card-h"><h2 style="flex:1">${esc(archivo)}</h2><button class="btn icon ghost" id="pcan">${icon('x')}</button></div>
+    ${conjuntos.some((c) => c.tipo === 'reclutas') ? `<div class="card" style="background:var(--surface-2);box-shadow:none;margin-bottom:10px">
+      <div class="row"><label class="field" style="flex:1;min-width:200px">¿Quién reclutó a las personas de este archivo?
+        <select class="input" id="prec">${S.data.usuarios.filter((u) => u.activo).map((u) => `<option value="${esc(u.usuario)}" ${u.usuario === (estado.reclutador || S.yo.usuario) ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select></label>
+        <label class="row small" style="align-self:flex-end"><input type="checkbox" id="preem" ${estado.reemplazar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--brand)"> Reemplazar si ya tienen otro reclutador</label></div>
+      <div class="small muted" style="margin-top:6px">Se empatan por CURP o celular con lo que ya reportó DiDi (no se duplican). Los que DiDi aún no reporta se crean como reclutas en espera. Esto no toca Asignaciones.</div>
+    </div>` : ''}
     <div class="grid">${conjuntos.map((c, i) => {
+      if (c.tipo === 'reclutas') {
+        return `<div class="row" style="border:1px solid var(--border);border-radius:12px;padding:10px">
+          <input type="checkbox" data-inc="${i}" ${c.incluir ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--brand)">
+          <div style="flex:1"><b>${esc(TIPO_LABEL.reclutas)}</b> <span class="badge ${c.conduciendo ? 'b-ok' : 'b-warn'}">${c.conduciendo ? 'Conduciendo' : 'Esperando estatus'}</span>
+          <div class="small muted">Hoja “${esc(c.hoja)}” · ${fmtNum(c.total)} personas</div></div></div>`;
+      }
       const nuevos = c.tipo === 'general' ? 0 : c.filas.filter((f) => !existentes.has(f.id)).length;
       const [y, w] = c.semana.split('-W');
       const vieja = top3.length >= 3 && c.semana < top3[2] && !top3.includes(c.semana);
@@ -78,6 +90,8 @@ function pintarPrevia(el) {
   prev.querySelectorAll('[data-inc]').forEach((x) => (x.onchange = () => (conjuntos[+x.dataset.inc].incluir = x.checked)));
   const setW = (i) => { conjuntos[i].semana = semanaKey(+prev.querySelector(`[data-y="${i}"]`).value, +prev.querySelector(`[data-w="${i}"]`).value); };
   prev.querySelectorAll('[data-w],[data-y]').forEach((x) => (x.onchange = () => { setW(+(x.dataset.w ?? x.dataset.y)); pintarPrevia(el); }));
+  prev.querySelector('#prec')?.addEventListener('change', (e) => (estado.reclutador = e.target.value));
+  prev.querySelector('#preem')?.addEventListener('change', (e) => (estado.reemplazar = e.target.checked));
   prev.querySelector('#pgo').onclick = () => importar(el);
 }
 
@@ -88,8 +102,10 @@ async function importar(el) {
   const btn = el.querySelector('#pgo'); btn.disabled = true; el.querySelector('#pcan2').disabled = true;
   const bar = el.querySelector('#pbar'); const msg = el.querySelector('#pmsg'); bar.classList.remove('hidden');
   // Orden: conversion/recuperacion antes que productividad/asignados, para que las métricas de operación ganen si se repite un chofer.
-  const ORD = { general: 0, conversion: 1, recuperacion: 2, productividad: 3, asignados: 4 };
+  const ORD = { general: 0, conversion: 1, recuperacion: 2, productividad: 3, asignados: 4, reclutas: 5 };
   sel.sort((a, b) => ORD[a.tipo] - ORD[b.tipo]);
+  const reclutador = estado.reclutador || S.yo.usuario; const reemplazar = !!estado.reemplazar;
+  const resRec = { empatados: 0, nuevos: 0, yaTenianOtro: 0, sinDatos: 0 };
   const total = sel.reduce((a, c) => a + Math.ceil(c.filas.length / LOTE), 0); let hechos = 0;
   const resumen = { nuevos: 0, actualizados: 0 };
   const ids = new Set();
@@ -98,6 +114,11 @@ async function importar(el) {
       for (let i = 0; i < c.filas.length; i += LOTE) {
         msg.textContent = `${TIPO_LABEL[c.tipo]}: ${Math.min(i + LOTE, c.filas.length)} de ${c.filas.length}…`;
         const rows = c.filas.slice(i, i + LOTE);
+        if (c.tipo === 'reclutas') {
+          const rr = await api('/import/reclutas', { method: 'POST', body: { reclutado_por: reclutador, reemplazar, rows } });
+          for (const k in resRec) resRec[k] += rr[k] || 0;
+          hechos++; bar.firstElementChild.style.width = `${(hechos / total) * 100}%`; continue;
+        }
         const r = await api('/import/lote', { method: 'POST', body: { tipo: c.tipo, semana: c.semana, rows } });
         resumen.nuevos += r.nuevos; resumen.actualizados += r.actualizados;
         if (c.tipo !== 'general') rows.forEach((x) => ids.add(x.id));
@@ -105,18 +126,21 @@ async function importar(el) {
       }
     }
     msg.textContent = 'Depurando semanas antiguas…';
-    const semanas = [...new Set(sel.map((c) => c.semana))].sort();
-    let fin;
+    const semanas = [...new Set(sel.filter((c) => c.tipo !== 'reclutas').map((c) => c.semana))].sort();
+    let fin = { semanas: S.data.semanas, depuradas: [], registrosBorrados: 0 };
     for (const s of semanas) fin = await api('/import/finalizar', { method: 'POST', body: { semana: s, archivo, tipo: sel.map((c) => c.tipo).join('+'), resumen } });
+    const conReclutas = sel.some((c) => c.tipo === 'reclutas');
+    if (conReclutas) await api('/import/finalizar-reclutas', { method: 'POST', body: { archivo, reclutado_por: reclutador, resumen: resRec } });
     bar.firstElementChild.style.width = '100%';
     estado = null;
     await recargar();
     const sinAsignar = [...ids].filter((id) => !S.d.get(id)?.ch.asignado_a).length;
     el.querySelector('#prev').innerHTML = `<div class="card">
       <h2>${icon('check')} Importación terminada</h2>
-      <p>${resumen.nuevos} choferes nuevos · ${resumen.actualizados} actualizados.<br>
-      Semanas en la base: ${fin.semanas.map(semanaLabel).join(', ')}${fin.depuradas.length ? `<br><b>Se depuraron:</b> ${fin.depuradas.map(semanaLabel).join(', ')} (${fin.registrosBorrados} registros)` : ''}</p>
-      ${sinAsignar ? `<button class="btn primary" id="gasig">Asignar los ${sinAsignar} sin asignar</button>` : ''}
+      ${conReclutas ? `<p><b>Reclutas:</b> ${resRec.empatados} empatados con lo que ya reportó DiDi · ${resRec.nuevos} nuevos en espera${resRec.yaTenianOtro ? ` · ${resRec.yaTenianOtro} ya tenían otro reclutador${reemplazar ? ' (se reemplazó)' : ' (se respetó)'}` : ''}${resRec.sinDatos ? ` · ${resRec.sinDatos} sin CURP ni celular (no se cargaron)` : ''}</p>` : ''}
+      ${semanas.length ? `<p>${resumen.nuevos} choferes nuevos · ${resumen.actualizados} actualizados.<br>
+      Semanas en la base: ${fin.semanas.map(semanaLabel).join(', ')}${fin.depuradas.length ? `<br><b>Se depuraron:</b> ${fin.depuradas.map(semanaLabel).join(', ')} (${fin.registrosBorrados} registros)` : ''}</p>` : ''}
+      ${sinAsignar && sel.some((c) => c.tipo === 'asignados') ? `<button class="btn primary" id="gasig">Asignar los ${sinAsignar} sin asignar</button>` : ''}
     </div>`;
     el.querySelector('#gasig')?.addEventListener('click', () => {
       S.ui.filtros = { cat: 'todos', q: '', seg: '', asignado: '_none', contacto: '', orden: 'prioridad' };

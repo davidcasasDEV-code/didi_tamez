@@ -31,6 +31,7 @@ const DETECTORES = [
   { tipo: 'recuperacion', test: (h) => h.includes('status del driver') || h.includes('last_trip_before_cb') },
 ];
 export const TIPO_LABEL = {
+  reclutas: 'Reclutas del equipo (Excel propio)',
   asignados: 'Lista de conductores asignados (segmentos)',
   conversion: 'Conversión · registro y documentos',
   productividad: 'Productividad · nuevos conductores',
@@ -87,6 +88,36 @@ function semanaDeFechas(fechas) {
   const d = new Date(ds[ds.length - 1] + 'T12:00:00'); return isoWeek(d);
 }
 
+/**
+ * Excel propio del equipo: hojas tipo "esperando status" / "conduciendo" con columnas Nombre/Name, CURP,
+ * WhatsApp/celular, carro/tiene auto, STATUS, EXCEL DIDI (SI / SI RECUPERADO) y columnas libres de notas.
+ */
+function hojaEquipo(XLSX, ws, nombreHoja) {
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  const hi = rows.findIndex((r, i) => i < 5 && r.some((c) => /^(name|nombre)$/.test(norm(c))) && r.some((c) => norm(c) === 'curp'));
+  if (hi < 0 || rows[hi].some((c) => /^id[ _]conductor$/.test(norm(c)))) return null;
+  const h = rows[hi].map(norm);
+  const col = (re) => h.findIndex((x) => re.test(x));
+  const iN = col(/^(name|nombre)$/), iC = col(/^curp$/), iT = col(/^(wha|whatsapp|celular|telefono|tel)$/), iA = col(/carro|auto/),
+    iS = col(/^status|estatus/), iD = col(/excel didi/);
+  const conocidas = new Set([iN, iC, iT, iA, iS, iD]);
+  const hojaConduce = /conduc/i.test(nombreHoja);
+  const filas = rows.slice(hi + 1).filter((r) => String(r[iN] ?? '').trim()).map((r) => {
+    const auto = iA >= 0 ? String(r[iA] ?? '').trim() : '';
+    const libres = r.map((v, i) => (!conocidas.has(i) && h[i] !== 'total' && !/^\d+$/.test(String(v).trim()) ? String(v ?? '').trim() : '')).filter(Boolean);
+    const notas = [auto && !/^s[ií]$|^no$/i.test(auto) ? `Auto: ${auto}` : '', ...libres].filter(Boolean).join(' · ');
+    const status = iS >= 0 ? String(r[iS] ?? '') : '';
+    return {
+      nombre: String(r[iN]).trim(), curp: iC >= 0 ? String(r[iC] ?? '').trim().toUpperCase() : '',
+      celular: iT >= 0 ? String(r[iT] ?? '').replace(/\D/g, '') : '',
+      tiene_auto: auto || undefined, notas: notas || undefined,
+      conduciendo: hojaConduce || /conduc/i.test(status),
+      recuperado: iD >= 0 && /recuper/i.test(String(r[iD] ?? '')),
+    };
+  });
+  return filas.length ? { tipo: 'reclutas', hoja: nombreHoja, filas, total: filas.length, conduciendo: hojaConduce } : null;
+}
+
 /** Lee un archivo y devuelve los conjuntos detectados con su semana sugerida. */
 export async function leerArchivo(file) {
   const XLSX = await cargarXLSX();
@@ -104,6 +135,8 @@ export async function leerArchivo(file) {
       if (kpis.length) conjuntos.push({ tipo: 'general', hoja: nombre, filas: kpis, total: kpis.length });
       continue;
     }
+    const eq = hojaEquipo(XLSX, ws, nombre);
+    if (eq) { conjuntos.push(eq); continue; }
     const t = tabla(XLSX, ws); if (!t) continue;
     const det = DETECTORES.find((d) => d.test(t.headers)); if (!det) continue;
     // Prospectos sin ID de DiDi (aún en registro): se identifican por CURP.
@@ -114,6 +147,7 @@ export async function leerArchivo(file) {
   }
   // Semana sugerida: semana_evaluacion (asignados) > "W[47]" en el nombre del archivo > fecha más reciente de último viaje.
   for (const c of conjuntos) {
+    if (c.tipo === 'reclutas') continue; // no tienen semana
     let week = null; let year = hoy.year;
     if (c.tipo === 'asignados') {
       const ws = c.raw.map((r) => +r.semana_evaluacion).filter(Boolean);

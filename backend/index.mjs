@@ -288,7 +288,8 @@ async function finalizarImport(user, body) {
 // Un reclutador solo ve, de los choferes que ya conducen, los que tiene asignados.
 // La base de Reclutamiento (registro, altas del equipo, nuevos conductores) sí la ve todo el equipo.
 const fuentesDe = (c) => new Set(c.fuentes instanceof Set ? c.fuentes : c.fuentes || []);
-const esRecluta = (c) => { const f = fuentesDe(c); return f.has('conversion') || f.has('reclutamiento') || f.has('productividad') || !!c.reclutado_por; };
+// Lista de 300 de DiDi (fuente 'asignados') = Asignaciones. Todo lo demás es la base de Reclutamiento, visible para el equipo.
+const esRecluta = (c) => !fuentesDe(c).has('asignados') || !!c.reclutado_por;
 const puedeVer = (user, c) => user.rol === 'admin' || c.asignado_a === user.usuario || esRecluta(c);
 async function choferVisible(user, id) {
   const c = (await db.send(new GetCommand({ TableName: T.choferes, Key: { id } }))).Item;
@@ -410,6 +411,61 @@ async function crearRecluta(user, b) {
   await registrarEvento({ id, usuario: user, tipo: 'nota', resultado: 'Nuevo recluta registrado', extra: { nombre } });
   await bumpVersion();
   return { id, yaExistia: false };
+}
+
+/**
+ * Importa el Excel propio de reclutas del equipo (hojas "esperando status" / "conduciendo").
+ * Empata por CURP o celular con lo que ya mandó DiDi; si no existe, crea el recluta provisional.
+ */
+async function importarReclutas(user, b) {
+  soloAdmin(user);
+  const rows = Array.isArray(b.rows) ? b.rows : [];
+  if (!rows.length || rows.length > 500) throw new HttpError(400, 'Lote inválido (máx. 500 filas)');
+  const reclutador = String(b.reclutado_por || user.usuario);
+  const u = (await db.send(new GetCommand({ TableName: T.usuarios, Key: { usuario: reclutador } }))).Item;
+  if (!u) throw new HttpError(400, 'Reclutador no válido');
+  const todos = await scanAll(T.choferes, { ProjectionExpression: 'id, curp, celular, celular_alt, reclutado_por, notas, nombre' });
+  const porCurp = new Map(); const porCel = new Map();
+  for (const c of todos) {
+    if (c.curp) porCurp.set(String(c.curp).toUpperCase().trim(), c);
+    for (const x of [c.celular, c.celular_alt]) if (soloDigitos(x).length === 10) porCel.set(soloDigitos(x), c);
+  }
+  const ts = nowIso(); const res = { empatados: 0, nuevos: 0, yaTenianOtro: 0, sinDatos: 0 };
+  await enParalelo(rows, 15, async (r) => {
+    const curp = String(r.curp || '').toUpperCase().replace(/\s/g, '');
+    const cel = soloDigitos(r.celular);
+    const nombre = String(r.nombre || '').trim();
+    const ex = (curp && porCurp.get(curp)) || (cel.length === 10 && porCel.get(cel));
+    const extra = { ':cm': !!r.conduciendo, ':ta': r.tiene_auto ? String(r.tiene_auto).slice(0, 80) : null, ':ts': ts, ':f': new Set(['reclutamiento']) };
+    if (ex) {
+      res.empatados++;
+      const otro = ex.reclutado_por && ex.reclutado_por !== reclutador;
+      if (otro) res.yaTenianOtro++;
+      const sets = ['conduciendo_manual = :cm', 'tiene_auto = :ta', 'actualizado_en = :ts', 'reclutado_en = if_not_exists(reclutado_en, :ts)'];
+      const vals = { ...extra };
+      if (!ex.reclutado_por || b.reemplazar) { sets.push('reclutado_por = :rp'); vals[':rp'] = reclutador; }
+      if (r.recuperado) { sets.push('recuperado = :rec'); vals[':rec'] = true; }
+      if (r.notas && !ex.notas) { sets.push('notas = :n'); vals[':n'] = String(r.notas).slice(0, 2000); }
+      if (nombre && (!ex.nombre || /^null$/i.test(ex.nombre))) { sets.push('nombre = :nom'); vals[':nom'] = nombre; } // DiDi a veces no manda el nombre
+      if (cel.length === 10 && !ex.celular) { sets.push('celular_alt = if_not_exists(celular_alt, :ca)'); vals[':ca'] = '52' + cel; }
+      await db.send(new UpdateCommand({ TableName: T.choferes, Key: { id: ex.id }, UpdateExpression: `SET ${sets.join(', ')} ADD fuentes :f`, ExpressionAttributeValues: vals }));
+      return;
+    }
+    const validCurp = /^[A-Z]{4}\d{6}[A-Z0-9]{8}$/.test(curp);
+    if (!validCurp && cel.length !== 10) { res.sinDatos++; return; }
+    const id = validCurp ? `CURP-${curp}` : `TEL-52${cel}`;
+    await db.send(new PutCommand({
+      TableName: T.choferes, ConditionExpression: 'attribute_not_exists(id)',
+      Item: {
+        id, nombre, curp: curp || undefined, celular: cel.length === 10 ? '52' + cel : undefined, estatus_didi: 'Registrado por el equipo',
+        fuentes: new Set(['reclutamiento']), reclutado_por: reclutador, reclutado_en: ts, conduciendo_manual: !!r.conduciendo,
+        recuperado: r.recuperado ? true : undefined, tiene_auto: extra[':ta'] || undefined, notas: r.notas ? String(r.notas).slice(0, 2000) : undefined,
+        estatus_contacto: 'pendiente', contactos: 0, creado_en: ts, actualizado_en: ts,
+      },
+    })).then(() => { res.nuevos++; porCurp.set(curp, { id }); if (cel.length === 10) porCel.set(cel, { id }); })
+      .catch((e) => { if (e.name === 'ConditionalCheckFailedException') res.empatados++; else throw e; });
+  });
+  return res;
 }
 
 async function subirAnexo(user, b) {
@@ -603,6 +659,18 @@ async function route(event) {
   if (method === 'GET' && path === '/bootstrap') { await asegurarPlantillas(); return bootstrap(user); }
   if (method === 'GET' && path === '/actividad') return actividad(user, q.limit, q.desde);
   if (method === 'POST' && path === '/reclutas') return crearRecluta(user, body);
+  if (method === 'POST' && path === '/import/reclutas') return importarReclutas(user, body);
+  if (method === 'POST' && path === '/import/finalizar-reclutas') {
+    soloAdmin(user);
+    const r = body.resumen || {};
+    const quien = (await db.send(new GetCommand({ TableName: T.usuarios, Key: { usuario: String(body.reclutado_por || '') } }))).Item?.nombre || body.reclutado_por;
+    const hist = (await getConfig('importaciones')) || [];
+    hist.unshift({ fecha: nowIso(), usuario: user.nombre, semana: '', archivo: String(body.archivo || ''), tipo: 'reclutas', resumen: { nuevos: r.nuevos || 0, actualizados: r.empatados || 0 }, depuradas: [] });
+    await putConfig('importaciones', hist.slice(0, 30));
+    await registrarEvento({ usuario: user, tipo: 'import', resultado: `Importó reclutas de ${quien} (${body.archivo || 'Excel'})`, nota: `${r.empatados || 0} empatados con DiDi · ${r.nuevos || 0} nuevos en espera` });
+    await bumpVersion();
+    return { ok: true };
+  }
   if (method === 'POST' && path === '/anexo') return subirAnexo(user, body);
   if (method === 'POST' && path === '/password') {
     if (!verifyPassword(String(body.actual || ''), user.password)) throw new HttpError(400, 'La contraseña actual no coincide');
