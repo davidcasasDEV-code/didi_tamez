@@ -105,8 +105,24 @@ async function importar(el) {
   // Orden: conversion/recuperacion antes que productividad/asignados, para que las métricas de operación ganen si se repite un chofer.
   const ORD = { general: 0, conversion: 1, recuperacion: 2, productividad: 3, asignados: 4, reclutas: 5 };
   sel.sort((a, b) => ORD[a.tipo] - ORD[b.tipo]);
-  const reclutador = estado.reclutador || S.yo.usuario; const reemplazar = !!estado.reemplazar;
+  const reclutador = esAdmin() ? (estado.reclutador || S.yo.usuario) : S.yo.usuario; const reemplazar = !!estado.reemplazar;
   const resRec = { empatados: 0, nuevos: 0, yaTenianOtro: 0, sinDatos: 0 };
+  // Excel de reclutas: una fila por persona con todas las pestañas donde aparece (una persona puede venir en varias).
+  const hojasRec = sel.filter((c) => c.tipo === 'reclutas');
+  if (hojasRec.length) {
+    const porPersona = new Map();
+    for (const c of hojasRec) for (const r of c.filas) {
+      const k = r.curp || 'T' + String(r.celular || '').replace(/\D/g, '').slice(-10);
+      const p = porPersona.get(k);
+      if (!p) { porPersona.set(k, { ...r, hojas: [r.hoja] }); continue; }
+      if (!p.hojas.includes(r.hoja)) p.hojas.push(r.hoja);
+      p.conduciendo ||= r.conduciendo; p.recuperado ||= r.recuperado;
+      if (r.notas && !String(p.notas || '').includes(r.notas)) p.notas = [p.notas, r.notas].filter(Boolean).join(' · ');
+      if (!p.celular && r.celular) p.celular = r.celular;
+    }
+    sel.splice(0, sel.length, ...sel.filter((c) => c.tipo !== 'reclutas'), { tipo: 'reclutas', hoja: hojasRec.map((c) => c.hoja).join(' + '), filas: [...porPersona.values()] });
+    await api('/import/reclutas-inicio', { method: 'POST', body: { reclutado_por: reclutador } });
+  }
   const total = sel.reduce((a, c) => a + Math.ceil(c.filas.length / LOTE), 0); let hechos = 0;
   const resumen = { nuevos: 0, actualizados: 0 };
   const ids = new Set();

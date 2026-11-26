@@ -100,10 +100,10 @@ function pintar(dr, d) {
       </label>` : ''}
       ${c.reclutado_por ? `<div class="row" style="margin-top:10px">
         <span class="badge ${d.cats.has('rec_conduciendo') ? 'b-ok' : 'b-warn'}">${d.cats.has('rec_conduciendo') ? 'Conduciendo' : 'Esperando estatus'}</span>
-        ${c.hoja_equipo ? `<span class="small muted">Pestaña de su Excel: “${esc(c.hoja_equipo)}”</span>` : ''}
+        ${Object.keys(c.listas || {}).length ? `<span class="small muted">En Excel de ${Object.entries(c.listas).map(([u, h]) => `${esc(usuarioNombre(u))}: “${esc(h.join('”, “'))}”`).join(' · ')}</span>` : c.hoja_equipo ? `<span class="small muted">Pestaña de su Excel: “${esc(c.hoja_equipo)}”</span>` : ''}
         ${d.cats.has('didi_activo') ? '<span class="badge b-brand">DiDi ya lo reporta activo</span>' : ''}
         <span class="spacer"></span>
-        <button class="btn sm" id="dcond">${d.cats.has('rec_conduciendo') ? 'Regresar a Esperando' : 'Mover a Conduciendo'}</button>
+        ${Object.keys(c.listas || {}).length ? '' : `<button class="btn sm" id="dcond">${d.cats.has('rec_conduciendo') ? 'Regresar a Esperando' : 'Mover a Conduciendo'}</button>`}
       </div>` : ''}
       <label class="field" style="margin-top:10px">Notas del chofer (visibles para todo el equipo)
         <textarea class="input" id="dnotas" rows="2" placeholder="Ej. prefiere que le llamen en la tarde">${esc(c.notas || '')}</textarea></label>

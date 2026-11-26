@@ -416,44 +416,64 @@ async function crearRecluta(user, b) {
  * Importa el Excel propio de reclutas del equipo (hojas "esperando status" / "conduciendo").
  * Empata por CURP o celular con lo que ya mandó DiDi; si no existe, crea el recluta provisional.
  */
+// Pertenencia a las listas del equipo: atributo "lista_<usuario>" = pestañas del Excel de ese usuario donde viene la persona.
+// Una persona puede estar en la lista de varios (p. ej. en el Excel de Jorge y en el de Nilzhe); el pago usa "reclutado_por".
+const attrLista = (usuario) => `lista_${usuario}`;
+
+/** Antes de importar el Excel de un reclutador se vacía su lista anterior, para que quede igual al archivo nuevo. */
+async function iniciarImportReclutas(user, b) {
+  const reclutador = user.rol === 'admin' ? String(b.reclutado_por || user.usuario) : user.usuario;
+  const items = await scanAll(T.choferes, { FilterExpression: 'attribute_exists(#l)', ExpressionAttributeNames: { '#l': attrLista(reclutador) }, ProjectionExpression: 'id' });
+  await enParalelo(items, 20, (c) => db.send(new UpdateCommand({
+    TableName: T.choferes, Key: { id: c.id }, UpdateExpression: 'REMOVE #l', ExpressionAttributeNames: { '#l': attrLista(reclutador) },
+  })));
+  return { limpiados: items.length };
+}
+
+/**
+ * Importa el Excel propio de reclutas de un miembro del equipo. Cada fila = una persona con sus pestañas (hojas).
+ * Empata por CURP o celular con lo que ya mandó DiDi; si no existe, crea el recluta provisional.
+ */
 async function importarReclutas(user, b) {
-  // Un reclutador solo puede importar reclutas a su propio nombre y sin quitárselos a nadie.
+  // Un reclutador solo puede importar a su propio nombre y sin quitarle reclutas a nadie.
   if (user.rol !== 'admin') b = { ...b, reclutado_por: user.usuario, reemplazar: false };
   const rows = Array.isArray(b.rows) ? b.rows : [];
   if (!rows.length || rows.length > 500) throw new HttpError(400, 'Lote inválido (máx. 500 filas)');
   const reclutador = String(b.reclutado_por || user.usuario);
   const u = (await db.send(new GetCommand({ TableName: T.usuarios, Key: { usuario: reclutador } }))).Item;
   if (!u) throw new HttpError(400, 'Reclutador no válido');
-  const todos = await scanAll(T.choferes, { ProjectionExpression: 'id, curp, celular, celular_alt, reclutado_por, notas, nombre, conduciendo_manual' });
+  const todos = await scanAll(T.choferes, { ProjectionExpression: 'id, curp, celular, celular_alt, reclutado_por, notas, nombre' });
   const porCurp = new Map(); const porCel = new Map();
   for (const c of todos) {
     if (c.curp) porCurp.set(String(c.curp).toUpperCase().trim(), c);
     for (const x of [c.celular, c.celular_alt]) if (soloDigitos(x).length === 10) porCel.set(soloDigitos(x), c);
   }
   const ts = nowIso(); const res = { empatados: 0, nuevos: 0, yaTenianOtro: 0, sinDatos: 0 };
+  const names = { '#l': attrLista(reclutador) };
   await enParalelo(rows, 15, async (r) => {
     const curp = String(r.curp || '').toUpperCase().replace(/\s/g, '');
     const cel = soloDigitos(r.celular);
     const nombre = String(r.nombre || '').trim();
+    const hojas = [...new Set((r.hojas || (r.hoja ? [r.hoja] : [])).map((h) => String(h).trim().slice(0, 60)).filter(Boolean))];
     const ex = (curp && porCurp.get(curp)) || (cel.length === 10 && porCel.get(cel));
-    const extra = { ':cm': !!r.conduciendo, ':ta': r.tiene_auto ? String(r.tiene_auto).slice(0, 80) : null, ':ts': ts, ':f': new Set(['reclutamiento']) };
+    const auto = r.tiene_auto ? String(r.tiene_auto).slice(0, 80) : null;
     if (ex) {
       res.empatados++;
       const otro = ex.reclutado_por && ex.reclutado_por !== reclutador;
       if (otro) res.yaTenianOtro++;
-      if (otro && !b.reemplazar) return; // es recluta de otra persona: no se toca nada
-      const sets = ['conduciendo_manual = :cm', 'actualizado_en = :ts', 'reclutado_en = if_not_exists(reclutado_en, :ts)'];
-      const vals = { ...extra };
-      if (extra[':ta']) sets.push('tiene_auto = :ta'); else delete vals[':ta'];
-      // combinar: si otro archivo ya lo marcó como conduciendo, no se regresa a esperando
-      if (b.combinar && ex.conduciendo_manual === true) vals[':cm'] = true;
-      if (r.hoja && !(b.combinar && ex.conduciendo_manual === true && !r.conduciendo)) { sets.push('hoja_equipo = :hj'); vals[':hj'] = String(r.hoja).slice(0, 60); }
-      if (!ex.reclutado_por || b.reemplazar) { sets.push('reclutado_por = :rp'); vals[':rp'] = reclutador; }
-      if (r.recuperado) { sets.push('recuperado = :rec'); vals[':rec'] = true; }
-      if (r.notas && !ex.notas) { sets.push('notas = :n'); vals[':n'] = String(r.notas).slice(0, 2000); }
+      // La pertenencia a la lista de este reclutador se guarda siempre (aunque el recluta sea de otra persona).
+      const sets = ['#l = :hojas', 'actualizado_en = :ts'];
+      const vals = { ':hojas': hojas, ':ts': ts, ':f': new Set(['reclutamiento']) };
+      if (!otro || b.reemplazar) {
+        sets.push('reclutado_en = if_not_exists(reclutado_en, :ts)');
+        if (!ex.reclutado_por || b.reemplazar) { sets.push('reclutado_por = :rp'); vals[':rp'] = reclutador; }
+        if (auto) { sets.push('tiene_auto = :ta'); vals[':ta'] = auto; }
+        if (r.recuperado) { sets.push('recuperado = :rec'); vals[':rec'] = true; }
+        if (r.notas && !ex.notas) { sets.push('notas = :n'); vals[':n'] = String(r.notas).slice(0, 2000); }
+        if (cel.length === 10 && !ex.celular) { sets.push('celular_alt = if_not_exists(celular_alt, :ca)'); vals[':ca'] = '52' + cel; }
+      }
       if (nombre && (!ex.nombre || /^null$/i.test(ex.nombre))) { sets.push('nombre = :nom'); vals[':nom'] = nombre; } // DiDi a veces no manda el nombre
-      if (cel.length === 10 && !ex.celular) { sets.push('celular_alt = if_not_exists(celular_alt, :ca)'); vals[':ca'] = '52' + cel; }
-      await db.send(new UpdateCommand({ TableName: T.choferes, Key: { id: ex.id }, UpdateExpression: `SET ${sets.join(', ')} ADD fuentes :f`, ExpressionAttributeValues: vals }));
+      await db.send(new UpdateCommand({ TableName: T.choferes, Key: { id: ex.id }, UpdateExpression: `SET ${sets.join(', ')} ADD fuentes :f`, ExpressionAttributeNames: names, ExpressionAttributeValues: vals }));
       return;
     }
     const validCurp = /^[A-Z]{4}\d{6}[A-Z0-9]{8}$/.test(curp);
@@ -463,8 +483,8 @@ async function importarReclutas(user, b) {
       TableName: T.choferes, ConditionExpression: 'attribute_not_exists(id)',
       Item: {
         id, nombre, curp: curp || undefined, celular: cel.length === 10 ? '52' + cel : undefined, estatus_didi: 'Registrado por el equipo',
-        fuentes: new Set(['reclutamiento']), reclutado_por: reclutador, reclutado_en: ts, conduciendo_manual: !!r.conduciendo,
-        recuperado: r.recuperado ? true : undefined, tiene_auto: extra[':ta'] || undefined, hoja_equipo: r.hoja ? String(r.hoja).slice(0, 60) : undefined, notas: r.notas ? String(r.notas).slice(0, 2000) : undefined,
+        fuentes: new Set(['reclutamiento']), reclutado_por: reclutador, reclutado_en: ts, [attrLista(reclutador)]: hojas,
+        recuperado: r.recuperado ? true : undefined, tiene_auto: auto || undefined, notas: r.notas ? String(r.notas).slice(0, 2000) : undefined,
         estatus_contacto: 'pendiente', contactos: 0, creado_en: ts, actualizado_en: ts,
       },
     })).then(() => { res.nuevos++; porCurp.set(curp, { id }); if (cel.length === 10) porCel.set(cel, { id }); })
@@ -710,6 +730,7 @@ async function route(event) {
   if (method === 'GET' && path === '/actividad') return actividad(user, q.limit, q.desde);
   if (method === 'POST' && path === '/reclutas') return crearRecluta(user, body);
   if (method === 'POST' && path === '/import/reclutas') return importarReclutas(user, body);
+  if (method === 'POST' && path === '/import/reclutas-inicio') return iniciarImportReclutas(user, body);
   if (method === 'POST' && path === '/import/finalizar-reclutas') {
     if (user.rol !== 'admin') body.reclutado_por = user.usuario;
     const r = body.resumen || {};

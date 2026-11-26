@@ -38,6 +38,31 @@ export function docsPendientes(ch) {
   return Object.keys(DOC_LABEL).filter((k) => d[k] && DOC_MALO.test(d[k])).map((k) => ({ k, label: DOC_LABEL[k], estado: d[k] }));
 }
 
+/**
+ * Parte de Reclutamiento de una persona vista desde un reclutador (o desde todo el equipo si u = '').
+ * Devuelve { esperando, conduciendo, sinCarro } — puede estar en varias a la vez si viene en varias pestañas.
+ */
+export function partesRecluta(d, u = '') {
+  const ch = d.ch; const listas = ch.listas || {};
+  const hojas = u ? listas[u] || [] : Object.values(listas).flat();
+  if (hojas.length) {
+    return {
+      esperando: hojas.some((h) => !/conduc/i.test(h)),
+      conduciendo: hojas.some((h) => /conduc/i.test(h)),
+      sinCarro: hojas.some((h) => /sin carro/i.test(h)),
+      estatusHoja: hojas.some((h) => /esperando/i.test(h)),
+    };
+  }
+  // Sin lista de Excel: altas manuales (por su reclutador) o registros de DiDi sin reclutador
+  if (u && ch.reclutado_por !== u) return { esperando: false, conduciendo: false, sinCarro: false, estatusHoja: false };
+  if (u && Object.keys(listas).length === 0 && ch.reclutado_por === u) {
+    return { esperando: d.cats.has('rec_esperando'), conduciendo: d.cats.has('rec_conduciendo'), sinCarro: false, estatusHoja: false };
+  }
+  return { esperando: d.cats.has('rec_esperando'), conduciendo: d.cats.has('rec_conduciendo'), sinCarro: /sin carro/i.test(ch.hoja_equipo || ''), estatusHoja: false };
+}
+const enEquipo = (d) => !!d.ch.reclutado_por || Object.keys(d.ch.listas || {}).length > 0;
+export { enEquipo };
+
 /** Calcula, para cada chofer, sus métricas por semana, tendencia, segmento y categorías. */
 export function derivar(data) {
   const u = data.umbrales; const lunes = inicioSemana().toISOString();
@@ -80,9 +105,24 @@ export function derivar(data) {
     // "Conduciendo" de un recluta lo define el equipo (pestaña "conduciendo" de su Excel o botón en el detalle).
     // Si DiDi ya lo reporta activo pero el equipo aún no lo mueve, se avisa en Esperando → "Ya conduce según DiDi".
     const conduceDidi = !!(ch.activado_semana || /conductor activo|comeback driver|primer viaje/i.test(est));
-    const conduce = ch.reclutado_por ? ch.conduciendo_manual === true : (ch.conduciendo_manual === true || conduceDidi);
-    cats.add(conduce ? 'rec_conduciendo' : 'rec_esperando');
-    if (!conduce && conduceDidi) cats.add('didi_activo');
+    // Listas del equipo: { usuario: [pestañas de su Excel donde viene esta persona] }
+    const listas = {};
+    for (const k of Object.keys(ch)) if (k.startsWith('lista_') && Array.isArray(ch[k]) && ch[k].length) listas[k.slice(6)] = ch[k];
+    ch.listas = listas;
+    const hayListas = Object.keys(listas).length > 0;
+    if (hayListas) cats.add('recluta');
+    let conduce;
+    if (hayListas) {
+      // Con listas, la pestaña manda: puede estar en Esperando para uno y en Conduciendo para otro.
+      const todas = Object.values(listas).flat();
+      if (todas.some((h) => /conduc/i.test(h))) cats.add('rec_conduciendo');
+      if (todas.some((h) => !/conduc/i.test(h))) cats.add('rec_esperando');
+      conduce = cats.has('rec_conduciendo') && !cats.has('rec_esperando');
+    } else {
+      conduce = ch.reclutado_por ? ch.conduciendo_manual === true : (ch.conduciendo_manual === true || conduceDidi);
+      cats.add(conduce ? 'rec_conduciendo' : 'rec_esperando');
+    }
+    if (cats.has('rec_esperando') && !cats.has('rec_conduciendo') && conduceDidi) cats.add('didi_activo');
     if (fuentes.has('recuperacion') || ch.recuperado) cats.add('recuperado');
     if (ch.activado_semana) cats.add('activado');
 

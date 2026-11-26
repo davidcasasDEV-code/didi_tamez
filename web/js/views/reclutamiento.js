@@ -3,7 +3,7 @@
 import { S, esAdmin, usuarioNombre, recargar, hashParams } from '../app.js';
 import { api } from '../api.js';
 import { esc, icon, fmtNum, celBonito, telLink, hace, toast, modal, cargarXLSX, titulo, colorDe, iniciales, confirmar } from '../util.js';
-import { semanaLabel, DOC_LABEL } from '../logic.js';
+import { semanaLabel, DOC_LABEL, partesRecluta, enEquipo } from '../logic.js';
 import { abrirPlantillas } from './chofer.js';
 import { estatusHtml } from './choferes.js';
 
@@ -18,25 +18,29 @@ const docPendiente = (d, k) => /sin subir|rechaz|reject|expir|pending|review/i.t
 const docAprobado = (d, k) => /aprob|approved/i.test(d.ch.docs?.[k] || '');
 // valor del filtro: "tarjeta" = le falta / rechazado · "ok:tarjeta" = ya lo tiene aprobado
 const cumpleDoc = (d, v) => (v.startsWith('ok:') ? docAprobado(d, v.slice(3)) : docPendiente(d, v));
+// Reclutador que se está viendo ('' = todo el equipo). Las partes y pestañas se calculan desde su Excel.
+let U = '';
+const P = (d) => partesRecluta(d, U);
 const sinViajes = (d) => d.s0 === ultimaSemana() ? !(+d.m0?.viajes > 0) : true;
 
 const PARTES = {
   esperando: {
     label: 'Esperando estatus', desc: 'Reclutados que todavía no hacen su primer viaje',
-    base: (d) => d.ch.reclutado_por && d.cats.has('rec_esperando'),
+    base: (d) => enEquipo(d) && P(d).esperando,
     tabs: [
       ['todos', 'Todos', () => true],
       ['documentos', 'Documentos pendientes', (d) => d.docs.length > 0 && !d.bloqueado],
       ['rechazados', 'Rechazados', rechazado],
       ['listos', 'Listos, sin viajes', listo],
-      ['sincarro', 'Aprobados sin carro', (d) => /sin carro/i.test(d.ch.hoja_equipo || '')],
+      ['hojaesp', 'Pestaña "esperando status"', (d) => P(d).estatusHoja],
+      ['sincarro', 'Pestaña "aprobados sin carro"', (d) => P(d).sinCarro],
       ['proceso', 'En proceso / sin datos de DiDi', enProceso],
       ['didiactivo', 'Ya conduce según DiDi', (d) => d.cats.has('didi_activo')],
     ],
   },
   conduciendo: {
     label: 'Conduciendo', desc: 'Los que el equipo ya tiene trabajando (pestaña "conduciendo")',
-    base: (d) => d.ch.reclutado_por && d.cats.has('rec_conduciendo'),
+    base: (d) => enEquipo(d) && P(d).conduciendo,
     tabs: [
       ['todos', 'Todos', () => true],
       ['activados', 'Activados (para pago)', (d) => !!d.ch.activado_semana],
@@ -46,7 +50,7 @@ const PARTES = {
   },
   didi: {
     label: 'En DiDi sin reclutador', desc: 'Aparecen en el reporte de DiDi pero nadie del equipo los ha registrado',
-    base: (d) => !d.ch.reclutado_por,
+    base: (d) => !enEquipo(d),
     tabs: [['todos', 'Todos', () => true], ['conduciendo', 'Ya conducen', (d) => d.cats.has('rec_conduciendo')], ['esperando', 'Esperando estatus', (d) => d.cats.has('rec_esperando')]],
   },
 };
@@ -57,7 +61,6 @@ function lista(f) {
   const q = f.q.trim().toLowerCase(); const qd = q.replace(/\D/g, '');
   return [...S.d.values()].filter((d) => {
     if (!d.cats.has('recluta') || !parte.base(d) || !tab(d)) return false;
-    if (f.parte !== 'didi' && f.rec && d.ch.reclutado_por !== f.rec) return false;
     if (f.doc && !cumpleDoc(d, f.doc)) return false;
     if (q) {
       const hay = `${d.ch.nombre || ''} ${d.ch.curp || ''} ${d.ch.id}`.toLowerCase();
@@ -73,14 +76,16 @@ const docChip = (lbl, v) => {
 };
 const docsHtml = (c) => (c.docs ? `<div class="docs">${docChip('INE', c.docs.ine)}${docChip('Lic', c.docs.licencia)}${docChip('Tarj', c.docs.tarjeta)}${docChip('Foto', c.docs.foto)}${docChip('BGC', c.docs.bgc)}</div>` : '<span class="small muted">Aún sin datos de DiDi</span>');
 const recHtml = (u) => (u ? `<span class="row" style="gap:6px;flex-wrap:nowrap"><span class="avatar" style="width:24px;height:24px;font-size:10px;background:${colorDe(u)}">${esc(iniciales(usuarioNombre(u)))}</span><span class="nowrap">${esc(usuarioNombre(u).split(' ')[0])}</span></span>` : '<span class="badge b-warn">Sin registrar</span>');
+const listasHtml = (c) => { const l = Object.entries(c.listas || {}); return l.length ? `<br><span class="small" style="display:inline">Excel: ${l.map(([u, h]) => `<span style="font-weight:700;display:inline">${esc(usuarioNombre(u).split(' ')[0])}</span> (${esc(h.join(', '))})`).join(' · ')}</span>` : ''; };
 const viajesHtml = (d) => (d.m0 ? `<b>${fmtNum(d.m0.viajes)}</b> <span class="small muted">${esc(semanaLabel(d.s0))}</span>` : '<span class="muted small">—</span>');
 
 export function renderReclutamiento(el) {
   S.ui.rec ||= { parte: 'esperando', tab: 'todos', q: '', rec: '', pagina: 0 };
   const f = S.ui.rec; f.parte ||= 'esperando';
   const parte = PARTES[f.parte];
+  U = f.parte === 'didi' ? '' : (f.rec || '');
   const todos = [...S.d.values()].filter((d) => d.cats.has('recluta'));
-  const cuenta = (p) => todos.filter(PARTES[p].base).filter((d) => p === 'didi' || !f.rec || d.ch.reclutado_por === f.rec).length;
+  const cuenta = (p) => { const prev = U; if (p === 'didi') U = ''; const n = todos.filter(PARTES[p].base).length; U = prev; return n; };
   const arr = lista(f);
   const paginas = Math.max(1, Math.ceil(arr.length / POR_PAGINA));
   f.pagina = Math.min(f.pagina || 0, paginas - 1);
@@ -92,13 +97,16 @@ export function renderReclutamiento(el) {
   // Activaciones por reclutador y semana (base para el pago)
   const reclutados = todos.filter((d) => d.ch.reclutado_por);
   const semanasAct = [...new Set(reclutados.map((d) => d.ch.activado_semana).filter(Boolean))].sort().reverse().slice(0, 4);
+  // Conteos por pestaña del Excel de cada quien (como ellos los cuentan) + activados para pago (por "reclutado por")
   const filasAct = usuarios.map((u) => {
     const mios = reclutados.filter((d) => d.ch.reclutado_por === u.usuario);
-    return { u: u.usuario, total: mios.length, esp: mios.filter((d) => d.cats.has('rec_esperando')).length, cond: mios.filter((d) => d.cats.has('rec_conduciendo')).length,
+    const ps = todos.map((d) => partesRecluta(d, u.usuario));
+    return { u: u.usuario, total: mios.length + ps.filter((p) => p.esperando || p.conduciendo).length,
+      hojaEsp: ps.filter((p) => p.estatusHoja).length, sinCarro: ps.filter((p) => p.sinCarro).length, cond: ps.filter((p) => p.conduciendo).length,
       act: mios.filter((d) => d.ch.activado_semana).length, porSem: semanasAct.map((w) => mios.filter((d) => d.ch.activado_semana === w).length) };
   }).filter((r) => r.total);
 
-  const tabsHtml = parte.tabs.map(([k, l, fn]) => `<button class="tab ${f.tab === k ? 'active' : ''}" data-tab="${k}">${l} <span class="badge">${todos.filter(parte.base).filter(fn).filter((d) => (f.parte === 'didi' || !f.rec || d.ch.reclutado_por === f.rec) && (!f.doc || cumpleDoc(d, f.doc))).length}</span></button>`).join('');
+  const tabsHtml = parte.tabs.map(([k, l, fn]) => `<button class="tab ${f.tab === k ? 'active' : ''}" data-tab="${k}">${l} <span class="badge">${todos.filter(parte.base).filter(fn).filter((d) => !f.doc || cumpleDoc(d, f.doc)).length}</span></button>`).join('');
 
   el.innerHTML = `
   <div class="topbar">
@@ -114,9 +122,9 @@ export function renderReclutamiento(el) {
   </div>
 
   ${reclutados.length ? `<div class="card" style="margin-bottom:14px">
-    <div class="card-h"><h2 style="flex:1">Por reclutador</h2><span class="small muted">Activado = primer viaje reportado por DiDi (base para el pago)</span></div>
-    <div class="table-wrap" style="border:0"><table class="t"><thead><tr><th>Reclutador</th><th class="num">Esperando</th><th class="num">Conduciendo</th>${semanasAct.map((w) => `<th class="num">Activados ${semanaLabel(w)}</th>`).join('')}<th class="num">Total activados</th></tr></thead><tbody>
-      ${filasAct.map((r) => `<tr data-rec="${esc(r.u)}"><td>${recHtml(r.u)}</td><td class="num">${r.esp}</td><td class="num">${r.cond}</td>${r.porSem.map((n) => `<td class="num"><b>${n || '—'}</b></td>`).join('')}<td class="num"><b>${r.act}</b></td></tr>`).join('')}
+    <div class="card-h"><h2 style="flex:1">Por reclutador</h2><span class="small muted">Conteo por pestaña de su Excel · Activados = primer viaje reportado por DiDi, para quien aparece en "Reclutado por"</span></div>
+    <div class="table-wrap" style="border:0"><table class="t"><thead><tr><th>Reclutador</th><th class="num">Esperando status</th><th class="num">Aprobados sin carro</th><th class="num">Conduciendo</th>${semanasAct.map((w) => `<th class="num">Activados ${semanaLabel(w)}</th>`).join('')}<th class="num">Total activados</th></tr></thead><tbody>
+      ${filasAct.map((r) => `<tr data-rec="${esc(r.u)}"><td>${recHtml(r.u)}</td><td class="num">${r.hojaEsp}</td><td class="num">${r.sinCarro || '—'}</td><td class="num">${r.cond}</td>${r.porSem.map((n) => `<td class="num"><b>${n || '—'}</b></td>`).join('')}<td class="num"><b>${r.act}</b></td></tr>`).join('')}
     </tbody></table></div></div>` : `<div class="card" style="margin-bottom:14px"><b>Aún no hay reclutas registrados.</b> <span class="muted">Importa tu Excel de reclutas en Importar, o da de alta uno por uno con “+ Nuevo recluta”.</span></div>`}
 
   <div class="tabs">${tabsHtml}</div>
@@ -152,7 +160,7 @@ export function renderReclutamiento(el) {
       const c = d.ch;
       return `<tr data-open="${esc(c.id)}" class="${sel.has(c.id) ? 'sel' : ''}">
         ${seleccionable ? `<td><input type="checkbox" data-chk="${esc(c.id)}" ${sel.has(c.id) ? 'checked' : ''}></td>` : ''}
-        <td class="name-cell"><b>${esc(titulo(c.nombre || '(sin nombre)'))}${d.cats.has('recuperado') ? ' <span class="badge b-brand">recuperado</span>' : ''}</b><span>${esc(c.cel ? celBonito(c.cel) : c.curp ? 'CURP ' + c.curp + ' · sin celular' : 'sin celular')}${c.notas ? ` · <span title="${esc(c.notas)}">📝</span>` : ''}</span></td>
+        <td class="name-cell"><b>${esc(titulo(c.nombre || '(sin nombre)'))}${d.cats.has('recuperado') ? ' <span class="badge b-brand">recuperado</span>' : ''}</b><span>${esc(c.cel ? celBonito(c.cel) : c.curp ? 'CURP ' + c.curp + ' · sin celular' : 'sin celular')}${c.notas ? ` · <span title="${esc(c.notas)}">📝</span>` : ''}${listasHtml(c)}</span></td>
         <td>${recHtml(c.reclutado_por)}</td>
         <td class="small" style="max-width:200px">${esc(c.estatus_didi || '—')}</td>
         ${f.parte === 'conduciendo' ? `<td class="num nowrap">${viajesHtml(d)}</td><td class="nowrap">${c.activado_semana ? `<span class="badge b-ok">${esc(semanaLabel(c.activado_semana))}</span>` : '<span class="muted small">—</span>'}</td>` : `<td>${docsHtml(c)}</td>`}
