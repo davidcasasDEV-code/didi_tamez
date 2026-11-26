@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { esc, icon, avatar, toast, modal, confirmar, fmtFecha } from '../util.js';
 import { VARIABLES_DISPONIBLES, llenar, variables, SEGMENTOS } from '../logic.js';
 
-const CATEGORIAS = [['bienvenida', 'Bienvenida'], ['A', 'Segmento A'], ['B', 'Segmento B'], ['C', 'Segmento C'], ['seguimiento', 'Seguimiento'], ['documentos', 'Documentos'], ['recuperacion', 'Recuperación'], ['general', 'General']];
+const CATEGORIAS = [['bienvenida', 'Bienvenida'], ['A', 'Segmento A'], ['B', 'Segmento B'], ['C', 'Segmento C'], ['seguimiento', 'Seguimiento'], ['documentos', 'Documentos'], ['recuperacion', 'Recuperación'], ['salida', 'Salida (opt-out)'], ['general', 'General']];
 
 export function renderAdmin(el) {
   const u = S.data.umbrales;
@@ -35,6 +35,15 @@ export function renderAdmin(el) {
       </form>
     </div>
   </div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h"><h2 style="flex:1">Anexo D · Aviso de Privacidad</h2>
+      <label class="btn sm primary">${icon('upload')} ${S.data.ajustes?.anexo_d ? 'Reemplazar archivo' : 'Subir archivo'}<input type="file" id="anexo" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" hidden></label></div>
+    ${S.data.ajustes?.anexo_d
+      ? `<div class="row"><span class="badge b-ok">${icon('check')} Cargado</span><a href="${esc(S.data.ajustes.anexo_d.url)}" target="_blank" rel="noopener">${esc(S.data.ajustes.anexo_d.nombre)}</a>
+         <span class="small muted">· ${esc(S.data.ajustes.anexo_d.por || '')} · ${fmtFecha(S.data.ajustes.anexo_d.fecha)}</span></div>
+         <p class="small muted" style="margin:8px 0 0">La plantilla de bienvenida incluye la liga con <code>{liga_anexo_d}</code>: el chofer lo abre con un clic, ya no hay que adjuntarlo.</p>`
+      : '<p class="small muted" style="margin:0">Sube el Anexo D (de preferencia en PDF, máx. 4 MB). Se publica con una liga que se pone sola en el mensaje de bienvenida.</p>'}
+  </div>
   <div class="card">
     <div class="card-h"><h2 style="flex:1">Plantillas de WhatsApp</h2><button class="btn sm primary" id="nuevaP">+ Nueva plantilla</button></div>
     <div class="table-wrap" style="border:0"><table class="t"><thead><tr><th>Nombre</th><th>Categoría</th><th>Vista previa</th><th>Actualizada</th></tr></thead><tbody>
@@ -44,6 +53,17 @@ export function renderAdmin(el) {
   </div>`;
 
   el.querySelector('#nuevoU').onclick = () => editarUsuario(null);
+  el.querySelector('#anexo').onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    if (file.size > 4 * 1024 * 1024) return toast('El archivo debe pesar menos de 4 MB', { tipo: 'err' });
+    if (/\.docx?$/i.test(file.name)) toast('Tip: en PDF se abre directo en el celular; Word obliga a descargarlo.', { ms: 6000 });
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer()); let bin = '';
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      await api('/anexo', { method: 'POST', body: { nombre: file.name, base64: btoa(bin) } });
+      toast('Anexo D publicado'); await recargar();
+    } catch (err) { toast(err.message, { tipo: 'err' }); }
+  };
   el.querySelectorAll('[data-editu]').forEach((b) => (b.onclick = () => editarUsuario(S.data.usuarios.find((x) => x.usuario === b.dataset.editu))));
   el.querySelector('#nuevaP').onclick = () => editarPlantilla(null);
   el.querySelectorAll('[data-editp]').forEach((r) => (r.onclick = () => editarPlantilla(S.data.plantillas.find((p) => p.id === r.dataset.editp))));
@@ -82,7 +102,7 @@ function editarUsuario(u) {
 
 function editarPlantilla(p) {
   const ejemplo = [...S.d.values()].find((d) => d.m0) || [...S.d.values()][0];
-  const vars = ejemplo ? variables(ejemplo, S.yo) : Object.fromEntries(VARIABLES_DISPONIBLES.map((k) => [k, `{${k}}`]));
+  const vars = ejemplo ? variables(ejemplo, S.yo, S.data.ajustes) : Object.fromEntries(VARIABLES_DISPONIBLES.map((k) => [k, `{${k}}`]));
   const m = modal(`<h2>${p ? 'Editar plantilla' : 'Nueva plantilla'}</h2>
     <form id="fp" class="grid">
       <div class="grid" style="grid-template-columns:2fr 1fr">

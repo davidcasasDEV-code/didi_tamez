@@ -7,7 +7,7 @@ import { segHtml, estatusHtml } from './choferes.js';
 import { eventoHtml } from './actividad.js';
 
 let abiertoId = null;
-const RESULTADOS = ['Respondió', 'Sin respuesta', 'Número equivocado', 'Buzón / no contesta', 'Otro trabajo', 'No le entran viajes', 'Tarifas', 'Beneficios', 'Agendó visita a oficina', 'Subirá documentos', 'Ya subió documentos', 'Problema con la app', 'Otro'];
+const RESULTADOS = ['Respondió', 'Se queda', 'Se quiere ir · se mandó liga de salida', 'Sin respuesta', 'Número equivocado', 'Buzón / no contesta', 'Otro trabajo', 'No le entran viajes', 'Tarifas', 'Beneficios', 'Agendó visita a oficina', 'Subirá documentos', 'Ya subió documentos', 'Problema con la app', 'Otro'];
 
 function cerrar() {
   abiertoId = null;
@@ -64,7 +64,11 @@ function pintar(dr, d) {
     <div class="card">
       <div class="row" style="align-items:flex-start"><div style="flex:1">${segTxt}</div>
         ${c.segmento_didi ? `<span class="badge" title="Segmento que venía en el Excel de DiDi">DiDi: ${esc(c.segmento_didi)}</span>` : ''}</div>
-      ${d.contactadoSemana ? `<div class="badge b-ok" style="margin-top:8px">${icon('check')} Contactado esta semana</div>` : ''}
+      <div class="row" style="margin-top:8px">
+        ${d.contactadoSemana ? `<span class="badge b-ok">${icon('check')} Contactado esta semana</span>` : ''}
+        ${c.bienvenida_enviada ? `<span class="badge b-ok">Bienvenida y Anexo D enviados · ${esc(fmtFecha(c.bienvenida_enviada))}</span>` : '<span class="badge b-warn">Falta mandar bienvenida y Anexo D</span>'}
+        ${c.activado_semana ? `<span class="badge b-brand">Activado (primer viaje) en ${esc(semanaLabel(c.activado_semana))}</span>` : ''}
+      </div>
     </div>
 
     ${ws.length ? `<div class="card"><h3 style="margin-bottom:8px">Comparativa por semana</h3>
@@ -88,6 +92,10 @@ function pintar(dr, d) {
           <select class="input" id="dest">${Object.entries(ESTATUS_CONTACTO).map(([k, v]) => `<option value="${k}" ${(c.estatus_contacto || 'pendiente') === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
         </label>
       </div>
+      ${d.cats.has('recluta') || c.reclutado_por ? `<label class="field" style="margin-top:10px">Reclutado por (para el pago al activarse)
+        ${esAdmin() ? `<select class="input" id="drec"><option value="">— Sin registrar —</option>${S.data.usuarios.map((u) => `<option value="${esc(u.usuario)}" ${c.reclutado_por === u.usuario ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select>`
+          : `<div style="min-height:24px"><b>${esc(c.reclutado_por ? usuarioNombre(c.reclutado_por) : 'Sin registrar')}</b>${c.reclutado_por ? '' : ' <span class="small muted">(regístralo en Reclutamiento → Nuevo recluta)</span>'}</div>`}
+      </label>` : ''}
       <label class="field" style="margin-top:10px">Notas del chofer (visibles para todo el equipo)
         <textarea class="input" id="dnotas" rows="2" placeholder="Ej. prefiere que le llamen en la tarde">${esc(c.notas || '')}</textarea></label>
       <label class="field" style="margin-top:10px">Celular alterno (si DiDi no lo trae o cambió de número)
@@ -140,6 +148,7 @@ function pintar(dr, d) {
     try { await api('/choferes/asignar', { method: 'POST', body: { ids: [c.id], usuario: S.yo.usuario } }); toast('Ahora este chofer es tuyo'); await recargar(); }
     catch (err) { toast(err.message, { tipo: 'err' }); }
   });
+  dr.querySelector('#drec')?.addEventListener('change', (e) => patch(c.id, { reclutado_por: e.target.value || null }, 'Reclutador actualizado'));
   dr.querySelector('#dest').onchange = (e) => patch(c.id, { estatus_contacto: e.target.value }, 'Estatus actualizado');
   const notas = dr.querySelector('#dnotas');
   notas.onblur = () => { if (notas.value !== (c.notas || '')) patch(c.id, { notas: notas.value }, 'Notas guardadas'); };
@@ -149,6 +158,8 @@ function pintar(dr, d) {
     if (!f.estatus_contacto && f.resultado === 'Respondió') f.estatus_contacto = 'respondio';
     if (!f.estatus_contacto && /Sin respuesta|no contesta/.test(f.resultado)) f.estatus_contacto = 'sin_respuesta';
     if (!f.estatus_contacto && /visita/i.test(f.resultado)) f.estatus_contacto = 'visita_agendada';
+    if (!f.estatus_contacto && f.resultado === 'Se queda') f.estatus_contacto = 'se_queda';
+    if (!f.estatus_contacto && /quiere ir/.test(f.resultado)) f.estatus_contacto = 'opt_out';
     await seguimiento(c.id, f);
   };
   cargarHistorial(c.id, dr);
@@ -180,7 +191,7 @@ export function abrirPlantillas(id) {
   const d = S.d.get(id); if (!d) return;
   if (!d.ch.cel) { toast('Este chofer no tiene celular; agrégalo en su detalle', { tipo: 'err' }); return; }
   const pls = S.data.plantillas; if (!pls.length) { toast('No hay plantillas configuradas', { tipo: 'err' }); return; }
-  const vars = variables(d, S.yo);
+  const vars = variables(d, S.yo, S.data.ajustes);
   let actual = sugerida(d, pls);
   const m = modal(`
     <div class="row" style="margin-bottom:10px"><div style="flex:1"><h2 style="margin:0">Mensaje para ${esc(titulo(d.ch.nombre || ''))}</h2>
@@ -210,13 +221,20 @@ export function abrirPlantillas(id) {
   m.el.querySelector('#tcopy').onclick = async () => {
     const ok = await copiar(ta.value);
     toast(ok ? 'Mensaje copiado. ¿Ya lo enviaste?' : 'No se pudo copiar', ok
-      ? { accion: 'Registrar envío', onAccion: () => seguimiento(id, { tipo: 'whatsapp', resultado: 'Mensaje enviado', plantilla: actual.nombre }) }
+      ? { accion: 'Registrar envío', onAccion: () => seguimiento(id, cuerpoEnvio(actual)) }
       : { tipo: 'err' });
   };
   m.el.querySelector('#tsend').onclick = () => {
     window.open(waLink(d.ch.cel, ta.value), '_blank', 'noopener');
-    seguimiento(id, { tipo: 'whatsapp', resultado: 'Mensaje enviado', plantilla: actual.nombre });
+    seguimiento(id, cuerpoEnvio(actual));
     m.close();
   };
 }
 export { VARIABLES_DISPONIBLES };
+
+function cuerpoEnvio(p) {
+  const body = { tipo: 'whatsapp', resultado: p.categoria === 'bienvenida' ? 'Se envió Anexo D y mensaje de bienvenida' : 'Mensaje enviado', plantilla: p.nombre };
+  if (p.categoria === 'bienvenida') body.bienvenida = true;
+  if (p.categoria === 'salida') { body.resultado = 'Se le mandó la liga de salida (opt-out)'; body.estatus_contacto = 'opt_out'; }
+  return body;
+}

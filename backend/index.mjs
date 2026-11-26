@@ -5,8 +5,13 @@ import {
   DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand,
   ScanCommand, QueryCommand, BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import crypto from 'node:crypto';
 import { DEFAULT_PLANTILLAS, DEFAULT_UMBRALES } from './defaults.mjs';
+
+const BUCKET = process.env.BUCKET;           // bucket del portal (documentos como el Anexo D van en docs/)
+const PORTAL_URL = process.env.PORTAL_URL;   // https://xxxx.cloudfront.net
+const s3 = new S3Client({});
 
 const P = 'DIDI_Choferes_Tamez_';
 const T = {
@@ -148,8 +153,60 @@ async function registrarEvento({ id = '_SISTEMA', usuario, tipo, resultado = '',
 const MERGE_CAMPOS = [
   'nombre', 'curp', 'celular', 'ciudad', 'estatus_didi', 'rol_vehiculo', 'docs', 'comentario_didi',
   'fecha_primer_viaje', 'fecha_ultimo_viaje', 'semanas_desde_dft', 'promocion', 'segmento_didi',
-  'ciudad_primer_viaje', 'ultimo_viaje_antes_cb',
+  'ciudad_primer_viaje', 'ultimo_viaje_antes_cb', 'orden_lista',
 ];
+const esPlaceholder = (id) => /^(CURP|TEL)-/.test(id);
+/** "2026-11-18" → "2026-W47" (semana ISO). */
+function semanaIso(fecha) {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(fecha || '')) return null;
+  const t = new Date(`${String(fecha).slice(0, 10)}T12:00:00Z`); const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  return `${t.getUTCFullYear()}-W${String(Math.ceil(((t - y0) / 86400000 + 1) / 7)).padStart(2, '0')}`;
+}
+const soloDigitos = (v) => String(v || '').replace(/\D/g, '').slice(-10);
+
+/**
+ * Reclutas dados de alta a mano (o prospectos sin ID de DiDi) viven con id CURP-xxx / TEL-xxx.
+ * Cuando DiDi los manda ya con su ID, se fusionan: el registro nuevo hereda quién lo reclutó, notas,
+ * asignación e historial, y se borra el provisional.
+ */
+async function fusionarProvisionales(rows) {
+  const prov = await scanAll(T.choferes, {
+    FilterExpression: 'begins_with(id, :c) OR begins_with(id, :t)',
+    ExpressionAttributeValues: { ':c': 'CURP-', ':t': 'TEL-' },
+  });
+  if (!prov.length) return 0;
+  const porCurp = new Map(); const porCel = new Map();
+  for (const p of prov) {
+    if (p.curp) porCurp.set(String(p.curp).toUpperCase(), p);
+    for (const c of [p.celular, p.celular_alt]) if (soloDigitos(c).length === 10) porCel.set(soloDigitos(c), p);
+  }
+  let fusionados = 0;
+  for (const r of rows) {
+    const id = String(r.id || ''); if (!id || esPlaceholder(id)) continue;
+    const p = (r.curp && porCurp.get(String(r.curp).toUpperCase())) || (soloDigitos(r.celular).length === 10 && porCel.get(soloDigitos(r.celular)));
+    if (!p || p.id === id) continue;
+    const heredar = {};
+    for (const k of ['reclutado_por', 'reclutado_en', 'notas', 'celular_alt', 'asignado_a', 'asignado_por', 'asignado_en',
+      'estatus_contacto', 'ultimo_contacto', 'contactos', 'bienvenida_enviada', 'creado_en']) if (p[k] !== undefined && p[k] !== null) heredar[k] = p[k];
+    const sets = Object.keys(heredar).map((k) => `${k} = if_not_exists(${k}, :${k})`);
+    if (sets.length) {
+      await db.send(new UpdateCommand({
+        TableName: T.choferes, Key: { id }, UpdateExpression: `SET ${sets.join(', ')}`,
+        ExpressionAttributeValues: Object.fromEntries(Object.entries(heredar).map(([k, v]) => [`:${k}`, v])),
+      }));
+    }
+    // mover historial
+    const evs = await queryAll({ TableName: T.seguimiento, KeyConditionExpression: 'id = :i', ExpressionAttributeValues: { ':i': p.id } });
+    await batchWrite(T.seguimiento, evs.map((e) => ({ PutRequest: { Item: { ...e, id } } })));
+    await batchWrite(T.seguimiento, evs.map((e) => ({ DeleteRequest: { Key: { id: p.id, ts: e.ts } } })));
+    await db.send(new DeleteCommand({ TableName: T.choferes, Key: { id: p.id } }));
+    porCurp.delete(String(p.curp || '').toUpperCase()); porCel.delete(soloDigitos(p.celular)); porCel.delete(soloDigitos(p.celular_alt));
+    fusionados++;
+  }
+  return fusionados;
+}
 async function importarLote(user, body) {
   soloAdmin(user);
   const { tipo, semana, rows } = body;
@@ -165,6 +222,7 @@ async function importarLote(user, body) {
 
   let nuevos = 0, actualizados = 0;
   const metricas = [];
+  const fusionados = await fusionarProvisionales(rows);
   await enParalelo(rows, 20, async (r) => {
     const id = String(r.id || '').trim(); if (!id) return;
     const sets = ['creado_en = if_not_exists(creado_en, :ts)', 'actualizado_en = :ts',
@@ -174,8 +232,16 @@ async function importarLote(user, body) {
       if (r[c] !== undefined && r[c] !== null && r[c] !== '') { sets.push(`${c} = :${c}`); vals[`:${c}`] = r[c]; }
     }
     if (r.metricas) { sets.push('ultima_semana = :sem'); vals[':sem'] = semana; }
+    // Activación (primer viaje): se guarda la primera semana en que se detecta y no se borra con la depuración.
+    const activo = /primer viaje/i.test(r.estatus_didi || '') || (tipo === 'productividad' && +r.metricas?.viajes > 0);
+    // La semana de activación es la del primer viaje que reporta DiDi (si viene); si no, la semana del archivo.
+    if (activo) {
+      sets.push('activado_semana = if_not_exists(activado_semana, :sem2)', 'activado_en = if_not_exists(activado_en, :ts)');
+      vals[':sem2'] = semanaIso(r.fecha_primer_viaje) || semana;
+    }
     const notas = r.notas_excel ? String(r.notas_excel).slice(0, 2000) : null;
     if (notas) { sets.push('notas_excel = :ne'); vals[':ne'] = notas; }
+    if (notas && /anexo d|bienvenida/i.test(notas)) { sets.push('bienvenida_enviada = if_not_exists(bienvenida_enviada, :ts)'); }
     const res = await db.send(new UpdateCommand({
       TableName: T.choferes, Key: { id },
       UpdateExpression: `SET ${sets.join(', ')} ADD fuentes :f`,
@@ -190,7 +256,7 @@ async function importarLote(user, body) {
   });
   // Si un chofer viene en dos archivos de la misma semana, gana el último en importarse.
   await batchWrite(T.semanas, metricas);
-  return { nuevos, actualizados, metricas: metricas.length };
+  return { nuevos, actualizados, metricas: metricas.length, fusionados };
 }
 
 async function finalizarImport(user, body) {
@@ -220,9 +286,9 @@ async function finalizarImport(user, body) {
 
 // ---------------------------------------------------------------- handlers
 async function bootstrap(user) {
-  const [usuarios, choferes, semanasItems, plantillas, umbrales, version, importaciones] = await Promise.all([
+  const [usuarios, choferes, semanasItems, plantillas, umbrales, version, importaciones, anexo] = await Promise.all([
     scanAll(T.usuarios), scanAll(T.choferes), scanAll(T.semanas), scanAll(T.plantillas),
-    getConfig('umbrales'), getConfig('version'), getConfig('importaciones'),
+    getConfig('umbrales'), getConfig('version'), getConfig('importaciones'), getConfig('anexo_d'),
   ]);
   const metricas = {}; const general = {}; const semanas = new Set();
   for (const s of semanasItems) {
@@ -240,6 +306,7 @@ async function bootstrap(user) {
     plantillas: plantillas.sort((a, b) => (a.orden ?? 99) - (b.orden ?? 99)),
     umbrales: { ...DEFAULT_UMBRALES, ...(umbrales || {}) },
     importaciones: importaciones || [],
+    ajustes: { anexo_d: anexo || null, liga_salida: 'https://d.didiglobal.com/salir' },
     version: version || 0,
   });
 }
@@ -280,7 +347,66 @@ async function asignar(user, { ids, usuario }) {
   return { asignados: ok, omitidos };
 }
 
-const ESTATUS_CONTACTO = ['pendiente', 'contactado', 'respondio', 'sin_respuesta', 'no_interesado', 'opt_out', 'visita_agendada'];
+const ESTATUS_CONTACTO = ['pendiente', 'contactado', 'respondio', 'se_queda', 'sin_respuesta', 'no_interesado', 'opt_out', 'visita_agendada'];
+
+/** Alta manual de un recluta. Si ya existe (por CURP o celular) y nadie lo ha reclamado, se le asigna quién lo reclutó. */
+async function crearRecluta(user, b) {
+  const nombre = String(b.nombre || '').trim();
+  const curp = String(b.curp || '').trim().toUpperCase();
+  const cel = soloDigitos(b.celular);
+  if (!nombre) throw new HttpError(400, 'El nombre es obligatorio');
+  if (cel.length !== 10 && !curp) throw new HttpError(400, 'Captura el celular (10 dígitos) o la CURP');
+  if (curp && !/^[A-Z]{4}\d{6}[A-Z0-9]{8}$/.test(curp)) throw new HttpError(400, 'La CURP no tiene un formato válido (18 caracteres)');
+  let reclutador = user.usuario;
+  if (b.reclutado_por && b.reclutado_por !== user.usuario) { soloAdmin(user); reclutador = b.reclutado_por; }
+  const todos = await scanAll(T.choferes, { ProjectionExpression: 'id, curp, celular, celular_alt, reclutado_por, nombre' });
+  const existe = todos.find((c) => (curp && String(c.curp || '').toUpperCase() === curp) ||
+    (cel.length === 10 && [c.celular, c.celular_alt].some((x) => soloDigitos(x) === cel)));
+  const ts = nowIso();
+  if (existe) {
+    if (existe.reclutado_por) {
+      const u = (await db.send(new GetCommand({ TableName: T.usuarios, Key: { usuario: existe.reclutado_por } }))).Item;
+      throw new HttpError(409, `${existe.nombre || 'Esta persona'} ya está registrada; la reclutó ${u?.nombre || existe.reclutado_por}`);
+    }
+    await db.send(new UpdateCommand({
+      TableName: T.choferes, Key: { id: existe.id },
+      UpdateExpression: 'SET reclutado_por = :r, reclutado_en = :ts, actualizado_en = :ts' + (cel.length === 10 && !existe.celular ? ', celular_alt = :c' : ''),
+      ExpressionAttributeValues: { ':r': reclutador, ':ts': ts, ...(cel.length === 10 && !existe.celular ? { ':c': '52' + cel } : {}) },
+    }));
+    await registrarEvento({ id: existe.id, usuario: user, tipo: 'nota', resultado: 'Registrado como recluta', extra: { nombre: existe.nombre } });
+    await bumpVersion();
+    return { id: existe.id, yaExistia: true };
+  }
+  const id = curp ? `CURP-${curp}` : `TEL-52${cel}`;
+  await db.send(new PutCommand({
+    TableName: T.choferes, ConditionExpression: 'attribute_not_exists(id)',
+    Item: {
+      id, nombre, curp: curp || undefined, celular: cel.length === 10 ? '52' + cel : undefined,
+      estatus_didi: 'Registrado por el equipo', fuentes: new Set(['reclutamiento']), reclutado_por: reclutador, reclutado_en: ts,
+      notas: b.notas ? String(b.notas).slice(0, 2000) : undefined, estatus_contacto: 'pendiente', contactos: 0, creado_en: ts, actualizado_en: ts,
+    },
+  }));
+  await registrarEvento({ id, usuario: user, tipo: 'nota', resultado: 'Nuevo recluta registrado', extra: { nombre } });
+  await bumpVersion();
+  return { id, yaExistia: false };
+}
+
+async function subirAnexo(user, b) {
+  soloAdmin(user);
+  if (!BUCKET) throw new HttpError(500, 'Falta configurar el bucket');
+  const ext = String(b.nombre || '').toLowerCase().match(/\.(pdf|docx?|jpe?g|png)$/)?.[1];
+  if (!ext) throw new HttpError(400, 'Sube un PDF, Word o imagen');
+  const buf = Buffer.from(String(b.base64 || ''), 'base64');
+  if (!buf.length || buf.length > 4 * 1024 * 1024) throw new HttpError(400, 'El archivo debe pesar menos de 4 MB');
+  const tipos = { pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+  // Nombre con fecha: cada versión tiene su propia URL, así CloudFront nunca sirve una copia vieja.
+  const key = `docs/Anexo-D-Aviso-de-Privacidad-${Date.now().toString(36)}.${ext}`;
+  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buf, ContentType: tipos[ext], CacheControl: 'public, max-age=31536000, immutable', ContentDisposition: `inline; filename="Anexo-D-Aviso-de-Privacidad.${ext}"` }));
+  const anexo = { url: `${PORTAL_URL}/${key}`, nombre: b.nombre, fecha: nowIso(), por: user.nombre };
+  await putConfig('anexo_d', anexo);
+  await bumpVersion();
+  return anexo;
+}
 
 async function actualizarChofer(user, id, body) {
   const sets = ['actualizado_en = :ts']; const vals = { ':ts': nowIso() };
@@ -290,12 +416,19 @@ async function actualizarChofer(user, id, body) {
   }
   if (body.notas !== undefined) { sets.push('notas = :n'); vals[':n'] = String(body.notas).slice(0, 2000); }
   if (body.celular_alt !== undefined) { sets.push('celular_alt = :c'); vals[':c'] = String(body.celular_alt).slice(0, 20); }
+  if (body.reclutado_por !== undefined) {
+    soloAdmin(user); // de esto depende el pago, solo el administrador lo corrige
+    sets.push('reclutado_por = :rp', 'reclutado_en = if_not_exists(reclutado_en, :ts)'); vals[':rp'] = body.reclutado_por || null;
+  }
   const r = await db.send(new UpdateCommand({
     TableName: T.choferes, Key: { id }, UpdateExpression: `SET ${sets.join(', ')}`,
     ConditionExpression: 'attribute_exists(id)', ExpressionAttributeValues: vals, ReturnValues: 'ALL_NEW',
   })).catch((e) => { if (e.name === 'ConditionalCheckFailedException') throw new HttpError(404, 'Chofer no encontrado'); throw e; });
   if (body.estatus_contacto !== undefined) {
     await registrarEvento({ id, usuario: user, tipo: 'estatus', resultado: `Estatus → ${body.estatus_contacto}`, extra: { nombre: r.Attributes.nombre } });
+  }
+  if (body.reclutado_por !== undefined) {
+    await registrarEvento({ id, usuario: user, tipo: 'nota', resultado: body.reclutado_por ? `Reclutado por → ${body.reclutado_por}` : 'Se quitó quién lo reclutó', extra: { nombre: r.Attributes.nombre } });
   }
   await bumpVersion();
   return clean(r.Attributes);
@@ -313,6 +446,7 @@ async function nuevoSeguimiento(user, id, body) {
   });
   const sets = ['ultimo_contacto = :u', 'actualizado_en = :ts', 'contactos = if_not_exists(contactos, :z) + :uno'];
   const vals = { ':u': { fecha: ev.fecha, por: user.usuario, tipo: body.tipo, resultado: ev.resultado }, ':ts': ev.fecha, ':z': 0, ':uno': 1 };
+  if (body.bienvenida) sets.push('bienvenida_enviada = if_not_exists(bienvenida_enviada, :ts)');
   let estatus = body.estatus_contacto;
   if (!estatus && ['whatsapp', 'llamada', 'visita'].includes(body.tipo) && (ch.estatus_contacto || 'pendiente') === 'pendiente') estatus = 'contactado';
   if (estatus) {
@@ -334,7 +468,13 @@ async function historial(id) {
   });
   return clean(items);
 }
-async function actividad(limit = 60) {
+async function actividad(limit = 60, desde) {
+  if (desde) { // todo lo ocurrido desde una fecha (para el formato semanal de DiDi)
+    return clean(await queryAll({
+      TableName: T.seguimiento, IndexName: 'Feed', KeyConditionExpression: 'gpk = :f AND ts >= :d',
+      ExpressionAttributeValues: { ':f': 'F', ':d': String(desde) }, ScanIndexForward: true,
+    }));
+  }
   const r = await db.send(new QueryCommand({
     TableName: T.seguimiento, IndexName: 'Feed', KeyConditionExpression: 'gpk = :f',
     ExpressionAttributeValues: { ':f': 'F' }, ScanIndexForward: false, Limit: Math.min(Number(limit) || 60, 200),
@@ -428,7 +568,9 @@ async function route(event) {
   const user = await auth(event);
   if (method === 'GET' && path === '/version') return { version: (await getConfig('version')) || 0 };
   if (method === 'GET' && path === '/bootstrap') { await asegurarPlantillas(); return bootstrap(user); }
-  if (method === 'GET' && path === '/actividad') return actividad(q.limit);
+  if (method === 'GET' && path === '/actividad') return actividad(q.limit, q.desde);
+  if (method === 'POST' && path === '/reclutas') return crearRecluta(user, body);
+  if (method === 'POST' && path === '/anexo') return subirAnexo(user, body);
   if (method === 'POST' && path === '/password') {
     if (!verifyPassword(String(body.actual || ''), user.password)) throw new HttpError(400, 'La contraseña actual no coincide');
     return editarUsuario({ rol: 'admin', usuario: '' }, user.usuario, { password: body.nueva });

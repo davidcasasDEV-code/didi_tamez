@@ -8,6 +8,7 @@ export const ESTATUS_CONTACTO = {
   pendiente: { label: 'Pendiente', cls: '' },
   contactado: { label: 'Contactado', cls: 'b-brand' },
   respondio: { label: 'Respondió', cls: 'b-ok' },
+  se_queda: { label: 'Se queda', cls: 'b-ok' },
   sin_respuesta: { label: 'Sin respuesta', cls: 'b-warn' },
   visita_agendada: { label: 'Visita agendada', cls: 'b-ok' },
   no_interesado: { label: 'No interesado', cls: 'b-bad' },
@@ -70,6 +71,11 @@ export function derivar(data) {
     if (fuentes.has('conversion') && !/primer viaje/i.test(est) && !bloqueado) cats.add('registro');
     if (docs.length && !bloqueado) cats.add('documentos');
     if (fuentes.has('recuperacion') && /comeback/i.test(est)) cats.add('recuperacion');
+    // Dos universos: los que ya conducen (Asignaciones) y los reclutas en proceso (Reclutamiento)
+    if (['asignados', 'productividad', 'recuperacion'].some((f) => fuentes.has(f))) cats.add('conduciendo');
+    // Reclutas: en registro (Conversión), dados de alta por el equipo, o nuevos conductores (Productividad de DiDi)
+    if (fuentes.has('conversion') || fuentes.has('reclutamiento') || fuentes.has('productividad') || ch.reclutado_por) cats.add('recluta');
+    if (ch.activado_semana) cats.add('activado');
 
     const contactadoSemana = !!(ch.ultimo_contacto?.fecha && ch.ultimo_contacto.fecha >= lunes);
     out.set(ch.id, {
@@ -82,8 +88,12 @@ export function derivar(data) {
 }
 
 // ---------- plantillas
-export function variables(d, yo) {
+export function variables(d, yo, ajustes = {}) {
   const ch = d.ch;
+  const v0 = d.m0 ? fmtNum(d.m0.viajes) : null; const v1 = d.m1 ? fmtNum(d.m1.viajes) : null;
+  const comparativa = v0 == null ? 'Aún no tenemos tus viajes de la semana.'
+    : v1 == null ? `La semana pasada hiciste ${v0} viajes.`
+    : `La semana anterior hiciste ${v1} viajes y la última semana ${v0}.`;
   const docs = d.docs.length ? d.docs.map((x) => `• ${x.label} (${x.estado.toLowerCase()})`).join('\n') : '• Revisa tus documentos en la app';
   return {
     nombre: primerNombre(ch.nombre) || 'conductor',
@@ -97,15 +107,20 @@ export function variables(d, yo) {
     promocion: ch.promocion && ch.promocion !== 'null' ? ch.promocion.replace(/\{\{[^}]+\}\}/g, '').trim() : 'consulta las promociones activas en tu app',
     ciudad: ch.ciudad || '',
     estatus_didi: ch.estatus_didi || '',
+    comparativa,
+    liga_anexo_d: ajustes.anexo_d?.url || '(liga del Anexo D pendiente: súbelo en Administración)',
+    liga_salida: ajustes.liga_salida || 'https://d.didiglobal.com/salir',
   };
 }
-export const VARIABLES_DISPONIBLES = ['nombre', 'nombre_completo', 'mi_nombre', 'viajes', 'viajes_prev', 'horas', 'ingreso', 'docs_pendientes', 'promocion', 'ciudad', 'estatus_didi'];
+export const VARIABLES_DISPONIBLES = ['nombre', 'nombre_completo', 'mi_nombre', 'viajes', 'viajes_prev', 'horas', 'ingreso', 'docs_pendientes', 'promocion', 'ciudad', 'estatus_didi', 'comparativa', 'liga_anexo_d', 'liga_salida'];
 export const llenar = (texto, vars) => String(texto).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
 
 /** Plantilla sugerida según la situación del chofer. */
 export function sugerida(d, plantillas) {
   const by = (cat) => plantillas.find((p) => p.categoria === cat);
-  if (!(d.ch.contactos > 0)) return by('bienvenida') || plantillas[0];
+  // La bienvenida + Anexo D se manda una sola vez por chofer
+  if (!d.ch.bienvenida_enviada) return by('bienvenida') || plantillas[0];
+  if (d.cats.has('recluta') && !d.cats.has('conduciendo') && d.docs.length) return by('documentos') || plantillas[0];
   if (d.seg) return by(d.seg) || plantillas[0];
   if (d.cats.has('documentos')) return by('documentos') || plantillas[0];
   if (d.cats.has('recuperacion')) return by('recuperacion') || plantillas[0];

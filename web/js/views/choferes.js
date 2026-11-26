@@ -2,15 +2,13 @@
 import { S, esAdmin, usuarioNombre, recargar, hashParams } from '../app.js';
 import { api } from '../api.js';
 import { esc, icon, fmtNum, fmtMoney, celBonito, telLink, avatar, hace, toast, modal, confirmar, cargarXLSX, titulo, colorDe, iniciales } from '../util.js';
-import { ESTATUS_CONTACTO, semanaLabel } from '../logic.js';
+import { ESTATUS_CONTACTO, SEGMENTOS, semanaLabel, inicioSemana } from '../logic.js';
 import { abrirPlantillas } from './chofer.js';
 
 const POR_PAGINA = 100;
 const SEG_ORD = { A: 0, B: 1, C: 2 };
-const CATS = [
-  ['prioridad', 'Prioridad A/B/C'], ['documentos', 'Documentos pendientes'], ['registro', 'En registro'],
-  ['recuperacion', 'Recuperación'], ['todos', 'Todos'],
-];
+// Asignaciones = choferes que ya conducen. Los reclutas en proceso viven en la sección Reclutamiento.
+const CATS = [['prioridad', 'Prioridad A/B/C'], ['recuperacion', 'Recuperación'], ['todos', 'Todos']];
 
 function filtrosDefault() {
   return { cat: esAdmin() ? 'todos' : 'prioridad', q: '', seg: '', asignado: esAdmin() ? '' : S.yo.usuario, contacto: '', orden: 'prioridad' };
@@ -20,7 +18,10 @@ export function filtrar(f = S.ui.filtros) {
   const q = f.q.trim().toLowerCase();
   const qd = q.replace(/\D/g, '');
   let arr = [...S.d.values()].filter((d) => {
+    if (!d.cats.has(f.universo || 'conduciendo')) return false;
     if (f.cat !== 'todos' && !d.cats.has(f.cat)) return false;
+    if (f.reclutado === '_none' && d.ch.reclutado_por) return false;
+    if (f.reclutado && f.reclutado !== '_none' && d.ch.reclutado_por !== f.reclutado) return false;
     if (f.seg && d.seg !== f.seg) return false;
     if (f.asignado === '_none' && d.ch.asignado_a) return false;
     if (f.asignado && f.asignado !== '_none' && d.ch.asignado_a !== f.asignado) return false;
@@ -41,7 +42,9 @@ export function filtrar(f = S.ui.filtros) {
     viajes_asc: (a, b) => v(a) - v(b),
     caida: (a, b) => (a.trend.viajes ?? 9) - (b.trend.viajes ?? 9),
     contacto: (a, b) => String(a.ch.ultimo_contacto?.fecha || '').localeCompare(String(b.ch.ultimo_contacto?.fecha || '')),
-  }[f.orden || 'prioridad'];
+    excel: (a, b) => (a.ch.orden_lista ?? 1e9) - (b.ch.orden_lista ?? 1e9) || String(a.ch.nombre).localeCompare(String(b.ch.nombre)),
+    reciente: (a, b) => String(b.ch.reclutado_en || b.ch.creado_en || '').localeCompare(String(a.ch.reclutado_en || a.ch.creado_en || '')),
+  }[f.orden || 'prioridad'] || (() => 0);
   return arr.sort(ord);
 }
 
@@ -76,8 +79,9 @@ export function renderChoferes(el) {
 
   el.innerHTML = `
   <div class="topbar">
-    <div><h1>Choferes</h1><div class="muted">${fmtNum(lista.length)} de ${fmtNum(todos.length)} · semanas ${S.data.semanas.map(semanaLabel).join(', ') || '—'}</div></div>
+    <div><h1>Asignaciones</h1><div class="muted">${fmtNum(lista.length)} de ${fmtNum(todos.filter((d) => d.cats.has('conduciendo')).length)} choferes que ya conducen · semanas ${S.data.semanas.map(semanaLabel).join(', ') || '—'}</div></div>
     <div class="spacer"></div>
+    <button class="btn" id="bdidi" title="Mismo formato que la lista de DiDi, con Contactado y Lunes–Viernes llenos desde el historial">${icon('down')} Formato DiDi (semana)</button>
     <button class="btn" id="bexp">${icon('down')} Exportar Excel</button>
   </div>
   <div class="tabs">${CATS.map(([k, l]) => `<button class="tab ${f.cat === k ? 'active' : ''}" data-cat="${k}">${l} <span class="badge">${cuentaCat(k)}</span></button>`).join('')}</div>
@@ -97,7 +101,7 @@ export function renderChoferes(el) {
       ${Object.entries(ESTATUS_CONTACTO).map(([k, v]) => `<option value="${k}" ${f.contacto === k ? 'selected' : ''}>Estatus: ${v.label}</option>`).join('')}
     </select>
     <select class="input" id="ford">
-      ${[['prioridad', 'Orden: prioridad'], ['viajes_desc', 'Más viajes'], ['viajes_asc', 'Menos viajes'], ['caida', 'Mayor caída'], ['contacto', 'Contacto más antiguo'], ['nombre', 'Nombre A-Z']]
+      ${[['prioridad', 'Orden: prioridad'], ['excel', 'Orden del Excel'], ['viajes_desc', 'Más viajes'], ['viajes_asc', 'Menos viajes'], ['caida', 'Mayor caída'], ['contacto', 'Contacto más antiguo'], ['nombre', 'Nombre A-Z']]
         .map(([k, l]) => `<option value="${k}" ${f.orden === k ? 'selected' : ''}>${l}</option>`).join('')}
     </select>
   </div>
@@ -113,8 +117,8 @@ export function renderChoferes(el) {
     : `<button class="btn sm primary" id="btomar">Asignármelos</button><button class="btn sm" id="bsoltar">Liberar los míos</button>`}
     <button class="btn sm" id="bclr">${icon('x')}</button>
   </div>` : `<div class="row small muted" style="margin-bottom:10px">
-    ${esAdmin() ? `<span>Tip: selecciona varios (o "primeros N") para asignarlos o repartirlos entre el equipo.</span>
-    <span class="spacer"></span><label class="row">Seleccionar primeros <input class="input" id="nsel" type="number" min="1" max="${lista.length}" style="width:84px;padding:5px 8px" placeholder="100"></label><button class="btn sm" id="bnsel">Seleccionar</button>` : '<span>Toca un chofer para ver su detalle, plantillas e historial.</span>'}
+    ${esAdmin() ? `<span>Tip: selecciona por renglón del Excel (p. ej. 1 al 150) y luego "Asignar a…".</span>
+    <span class="spacer"></span><label class="row">Renglón del Excel del <input class="input" id="nde" type="number" min="1" style="width:76px;padding:5px 8px" placeholder="1"> al <input class="input" id="nal" type="number" min="1" style="width:76px;padding:5px 8px" placeholder="150"></label><button class="btn sm" id="bnsel">Seleccionar</button>` : '<span>Toca un chofer para ver su detalle, plantillas e historial.</span>'}
   </div>`}
 
   ${lista.length ? `
@@ -150,9 +154,15 @@ export function renderChoferes(el) {
   el.querySelector('#bselall')?.addEventListener('click', () => { lista.forEach((d) => sel.add(d.ch.id)); rer(); });
   el.querySelector('#bclr')?.addEventListener('click', () => { sel.clear(); rer(); });
   el.querySelector('#bnsel')?.addEventListener('click', () => {
-    const n = Math.max(1, Math.min(lista.length, +el.querySelector('#nsel').value || 100));
-    sel.clear(); lista.slice(0, n).forEach((d) => sel.add(d.ch.id)); rer();
+    const de = Math.max(1, +el.querySelector('#nde').value || 1); const al = Math.max(de, +el.querySelector('#nal').value || de + 99);
+    // Usa el renglón de la lista de DiDi (orden_lista). Si no lo hay, la posición en la lista actual.
+    const conOrden = lista.filter((d) => d.ch.orden_lista);
+    const elegidos = conOrden.length ? conOrden.filter((d) => d.ch.orden_lista >= de && d.ch.orden_lista <= al) : lista.slice(de - 1, al);
+    sel.clear(); elegidos.forEach((d) => sel.add(d.ch.id));
+    if (conOrden.length) f.orden = 'excel';
+    toast(`${elegidos.length} chofer(es) seleccionados (renglones ${de}–${al}). Ahora elige "Asignar a…".`); rer();
   });
+  el.querySelector('#bdidi').onclick = () => exportarFormatoDidi(lista);
   el.querySelectorAll('[data-chk]').forEach((c) => {
     c.onclick = (e) => e.stopPropagation();
     c.onchange = () => { c.checked ? sel.add(c.dataset.chk) : sel.delete(c.dataset.chk); rer(); };
@@ -187,7 +197,7 @@ function filaHtml(d) {
   const c = d.ch; const sel = S.ui.sel.has(c.id);
   return `<tr data-open="${esc(c.id)}" class="${sel ? 'sel' : ''}">
     <td><input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''}></td>
-    <td class="name-cell"><b>${esc(titulo(c.nombre || '(sin nombre)'))}</b><span>${esc(celBonito(c.cel))}${d.docs.length ? ` · <span style="color:var(--warn)">${d.docs.length} doc. pendiente(s)</span>` : ''}</span></td>
+    <td class="name-cell"><b>${c.orden_lista ? `<span class="muted small">#${c.orden_lista}</span> ` : ''}${esc(titulo(c.nombre || '(sin nombre)'))}</b><span>${esc(celBonito(c.cel))} · ${c.bienvenida_enviada ? '<span style="color:var(--ok)">bienvenida ✓</span>' : '<span style="color:var(--warn)">sin bienvenida</span>'}</span></td>
     <td>${segHtml(d)}</td>
     <td class="num nowrap"><b>${d.m0 ? fmtNum(d.m0.viajes) : '—'}</b> ${trendHtml(d.trend.viajes)}</td>
     <td class="num nowrap">${d.m0 ? fmtNum(d.m0.tsh, 1) : '—'} ${d.caidaTsh != null && d.caidaTsh < -0.149 ? trendHtml(d.caidaTsh) : ''}</td>
@@ -275,5 +285,39 @@ async function exportar(lista) {
     const ws = XLSX.utils.json_to_sheet(filas); const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Choferes');
     XLSX.writeFile(wb, `Choferes_Tamez_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  } catch (e) { toast(e.message, { tipo: 'err' }); }
+}
+
+/** Exporta en el mismo formato de la lista de DiDi, llenando "Contactado o no?" y Lunes–Viernes desde el historial de esta semana. */
+async function exportarFormatoDidi(lista) {
+  try {
+    const XLSX = await cargarXLSX();
+    const lunes = inicioSemana().toISOString();
+    const evs = await api(`/actividad?desde=${encodeURIComponent(lunes)}`);
+    const porChofer = {}; const tiposPor = {};
+    for (const e of evs) {
+      if (!e.id || e.id.startsWith('_') || !['whatsapp', 'llamada', 'visita', 'nota', 'estatus'].includes(e.tipo)) continue;
+      (tiposPor[e.id] ||= new Set()).add(e.tipo);
+      const dia = new Date(e.fecha).getDay(); if (dia < 1 || dia > 5) continue;
+      ((porChofer[e.id] ||= {})[dia] ||= []).push(`${e.usuario_nombre}: ${[e.resultado, e.plantilla, e.nota].filter(Boolean).join(' · ')}`);
+    }
+    const ws0 = S.data.semanas[0];
+    const filas = [...lista].sort((a, b) => (a.ch.orden_lista ?? 1e9) - (b.ch.orden_lista ?? 1e9)).map((d) => {
+      const c = d.ch; const m = d.m0 || {}; const dias = porChofer[c.id] || {}; const tipos = tiposPor[c.id] || new Set();
+      const medios = [tipos.has('whatsapp') && 'mensaje', tipos.has('llamada') && 'llamada', tipos.has('visita') && 'visita'].filter(Boolean);
+      return {
+        id_conductor: c.id, nombre: c.nombre, curp: c.curp, celular: c.celular, primer_ciudad: c.ciudad,
+        semana_evaluacion: d.s0 ? Number(d.s0.split('-W')[1]) : '', fecha_primer_viaje: c.fecha_primer_viaje, fecha_ultimo_viaje: c.fecha_ultimo_viaje,
+        semanas_desde_dft: c.semanas_desde_dft ?? '', tiempo_conexion_horas_semana: m.tsh ?? '', viajes_totales_semana: m.viajes ?? '',
+        iph: m.iph ?? '', ipoh: m.ipoh ?? '', ingreso_por_viajes: m.ingreso ?? '', subsidy_b: m.subsidy ?? '',
+        Segmento: d.seg ? `${d.seg} - ${SEGMENTOS[d.seg].nombre}` : '',
+        'Contactado o no?': medios.length ? `Sí, contacto por ${medios.join(' y ')}` : '',
+        Lunes: (dias[1] || []).join('\n'), Martes: (dias[2] || []).join('\n'), Miercoles: (dias[3] || []).join('\n'),
+        Jueves: (dias[4] || []).join('\n'), Viernes: (dias[5] || []).join('\n'),
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), `Lista ${semanaLabel(ws0)}`.slice(0, 31));
+    XLSX.writeFile(wb, `AutoTamez_Lista_conductores_${new Date().toISOString().slice(0, 10)}.xlsx`);
   } catch (e) { toast(e.message, { tipo: 'err' }); }
 }

@@ -39,6 +39,17 @@ Un solo segmento por conductor (A > B > C). Solo aplica a choferes en operación
 **Depuración:** al importar se conservan las 3 semanas más recientes; cualquier semana más antigua se borra de `Semanas`
 (los choferes, sus asignaciones e historial de contactos se conservan).
 
+## Secciones
+
+* **Asignaciones**: choferes que ya conducen (lista de asignados, productividad, recuperación). Selección por renglón del
+  Excel ("del 1 al 150") para repartir, bienvenida + Anexo D marcada una sola vez, y exportación **Formato DiDi (semana)**
+  con *Contactado o no?* y Lunes–Viernes llenos desde el historial.
+* **Reclutamiento**: todos los reclutas (Conversión, Productividad y altas del equipo) con quién los reclutó, documentos,
+  y **activados por reclutador** (para pago). Activado = primer viaje; la semana es la de la fecha de primer viaje de DiDi.
+  Las altas manuales usan id `CURP-…`/`TEL-…` y se **fusionan** solas cuando DiDi manda a esa persona con su ID
+  (empate por CURP o celular; se heredan reclutador, notas, asignación e historial). Solo el admin cambia "reclutado por".
+* **Anexo D**: se sube en Administración (S3 `docs/`, URL con versión) y entra en la bienvenida con `{liga_anexo_d}`.
+
 ## Excel soportados (se detectan solos)
 
 * `【AutoTamez】La lista de conductores asignados.xlsx` → semana = `semana_evaluacion`; columnas Lunes–Viernes se guardan como nota.

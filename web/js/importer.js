@@ -39,11 +39,12 @@ export const TIPO_LABEL = {
 };
 
 const MAPEOS = {
-  asignados: (r) => {
+  asignados: (r, i) => {
     const notas = ['contactado o no?', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes']
       .map((k) => [k, txt(r[k])]).filter(([, v]) => v).map(([k, v]) => `${k === 'contactado o no?' ? 'Contactado' : k[0].toUpperCase() + k.slice(1)}: ${v}`);
     return {
       id: txt(r.id_conductor), nombre: txt(r.nombre), curp: txt(r.curp), celular: cel(r.celular), ciudad: txt(r.primer_ciudad),
+      orden_lista: i + 1, // renglón en la lista de DiDi (para repartir "del 1 al 150")
       fecha_primer_viaje: fecha(r.fecha_primer_viaje), fecha_ultimo_viaje: fecha(r.fecha_ultimo_viaje),
       semanas_desde_dft: vacio(r.semanas_desde_dft) ? undefined : num(r.semanas_desde_dft),
       segmento_didi: txt(r.segmento)?.trim()[0]?.toUpperCase(),

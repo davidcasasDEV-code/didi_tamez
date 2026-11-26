@@ -15,7 +15,8 @@ sed -i "s/__V__/$V/g" "$OUT/index.html"
 W="$OUT"; command -v cygpath >/dev/null && W="$(cygpath -w "$OUT")"
 
 # html/js/css: no-cache (el navegador revalida con ETag en cada carga → siempre la versión nueva)
-aws s3 sync "$W" "s3://$BUCKET" --delete --exclude "assets/*" --cache-control "no-cache" --region "$REGION"
+# docs/ lo escribe la Lambda (Anexo D subido desde Administración): nunca se toca aquí.
+aws s3 sync "$W" "s3://$BUCKET" --delete --exclude "assets/*" --exclude "docs/*" --cache-control "no-cache" --region "$REGION"
 # imágenes: caché de 7 días
 aws s3 sync "$W/assets" "s3://$BUCKET/assets" --delete --cache-control "public, max-age=604800" --region "$REGION"
 aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --query Invalidation.Id --output text

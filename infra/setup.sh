@@ -176,6 +176,14 @@ aws s3api put-bucket-policy --bucket "$BUCKET" --policy "{
   \"Resource\":\"arn:aws:s3:::${BUCKET}/*\",\"Condition\":{\"StringEquals\":{\"AWS:SourceArn\":\"${DIST_ARN}\"}}}]}"
 DOMAIN=$(aws cloudfront get-distribution --id "$DIST_ID" --query Distribution.DomainName --output text)
 
+log "Lambda: variables de entorno y permiso para subir documentos (Anexo D) solo a docs/"
+aws iam put-role-policy --role-name "$ROLE" --policy-name "${PROYECTO}_S3Docs" --policy-document "{
+  \"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],
+  \"Resource\":\"arn:aws:s3:::${BUCKET}/docs/*\"}]}"
+aws lambda update-function-configuration --function-name "$FN" --region "$REGION" \
+  --environment "Variables={BUCKET=${BUCKET},PORTAL_URL=https://${DOMAIN}}" >/dev/null
+aws lambda wait function-updated --function-name "$FN" --region "$REGION"
+
 cat > "$HERE/outputs.env" <<EOF
 REGION=$REGION
 BUCKET=$BUCKET

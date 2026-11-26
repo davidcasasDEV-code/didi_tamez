@@ -4,6 +4,7 @@ import { $, $$, esc, icon, avatar, toast, modal, hace } from './util.js';
 import { derivar } from './logic.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderChoferes } from './views/choferes.js';
+import { renderReclutamiento } from './views/reclutamiento.js';
 import { renderActividad } from './views/actividad.js';
 import { renderImportar } from './views/importar.js';
 import { renderAdmin } from './views/admin.js';
@@ -24,10 +25,11 @@ export const usuarioNombre = (u) => S.data?.usuarios.find((x) => x.usuario === u
 
 const VISTAS = {
   dashboard: { label: 'Inicio', icon: 'home', render: renderDashboard },
-  choferes: { label: 'Choferes', icon: 'car', render: renderChoferes },
+  choferes: { label: 'Asignaciones', corto: 'Asignados', icon: 'car', render: renderChoferes },
+  reclutamiento: { label: 'Reclutamiento', corto: 'Reclutas', icon: 'users', render: renderReclutamiento },
   actividad: { label: 'Actividad', icon: 'pulse', render: renderActividad },
   importar: { label: 'Importar', icon: 'upload', render: renderImportar, admin: true },
-  admin: { label: 'Administración', icon: 'gear', render: renderAdmin, admin: true },
+  admin: { label: 'Administración', corto: 'Admin', icon: 'gear', render: renderAdmin, admin: true },
 };
 
 export function vistaActual() { return (location.hash.replace(/^#\/?/, '').split('?')[0] || 'dashboard'); }
@@ -113,7 +115,7 @@ function navHtml(clase) {
       const mios = [...S.d.values()].filter((d) => d.ch.asignado_a === S.yo.usuario && d.seg && !d.contactadoSemana).length;
       if (mios) badge = `<span class="badge b-brand">${mios}</span>`;
     }
-    return `<a href="#/${k}" class="${v === k ? 'active' : ''}">${icon(x.icon)}<span>${clase === 'm' && k === 'admin' ? 'Admin' : x.label}</span>${clase === 'm' ? '' : badge}</a>`;
+    return `<a href="#/${k}" class="${v === k ? 'active' : ''}">${icon(x.icon)}<span>${clase === 'm' ? x.corto || x.label : x.label}</span>${clase === 'm' ? '' : badge}</a>`;
   }).join('');
 }
 

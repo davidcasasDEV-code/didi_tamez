@@ -9,11 +9,14 @@ export function renderDashboard(el) {
   const yo = S.yo;
   S.ui.dashScope ||= esAdmin() ? 'equipo' : 'mios';
   const scope = S.ui.dashScope;
-  const todos = [...S.d.values()];
+  const todosBase = [...S.d.values()];
+  const todos = todosBase.filter((d) => d.cats.has('conduciendo'));
+  const reclutas = todosBase.filter((d) => d.cats.has('recluta'));
+  const ultAct = [...new Set(reclutas.map((d) => d.ch.activado_semana).filter(Boolean))].sort().pop();
   const lista = scope === 'mios' ? todos.filter((d) => d.ch.asignado_a === yo.usuario) : todos;
   const semanas = S.data.semanas;
 
-  if (!todos.length) {
+  if (!todosBase.length) {
     el.innerHTML = `<div class="card empty"><img src="assets/didi-mark.jpg" alt=""><h2>Aún no hay choferes cargados</h2>
       <p>${esAdmin() ? 'Importa la lista de conductores asignados o el Dashboard semanal de DiDi para empezar.' : 'El administrador aún no ha importado información.'}</p>
       ${esAdmin() ? `<button class="btn primary" id="goimp">${icon('upload')} Importar Excel</button>` : ''}</div>`;
@@ -26,7 +29,8 @@ export function renderDashboard(el) {
   const contactadosPrio = prioridad.filter((d) => d.contactadoSemana).length;
   const seg = { A: cnt((d) => d.seg === 'A'), B: cnt((d) => d.seg === 'B'), C: cnt((d) => d.seg === 'C') };
   const segPend = { A: cnt((d) => d.seg === 'A' && !d.contactadoSemana), B: cnt((d) => d.seg === 'B' && !d.contactadoSemana), C: cnt((d) => d.seg === 'C' && !d.contactadoSemana) };
-  const docs = cnt((d) => d.cats.has('documentos'));
+  const docs = reclutas.filter((d) => d.docs.length && !d.bloqueado && (scope !== 'mios' || d.ch.reclutado_por === yo.usuario)).length;
+  const activados = ultAct ? reclutas.filter((d) => d.ch.activado_semana === ultAct && (scope !== 'mios' || d.ch.reclutado_por === yo.usuario)).length : 0;
   const recup = cnt((d) => d.cats.has('recuperacion'));
   const sinAsignar = todos.filter((d) => !d.ch.asignado_a).length;
 
@@ -89,7 +93,8 @@ export function renderDashboard(el) {
     ${kpi('A · Sin viajes', seg.A, 'Métrica: retención', { seg: 'A' }, 'A')}
     ${kpi('B · Horas a la baja', seg.B, 'Métrica: TSH total', { seg: 'B' }, 'B')}
     ${kpi('C · Alto potencial', seg.C, 'Métrica: TSH por conductor', { seg: 'C' }, 'C')}
-    ${kpi('Documentos pendientes', docs, 'Registro incompleto', { cat: 'documentos' })}
+    ${kpi('Reclutas con docs pendientes', docs, 'Ver en Reclutamiento', { vista: 'reclutamiento', tab: 'documentos' })}
+    ${kpi(`Activados ${ultAct ? semanaLabel(ultAct) : ''}`, activados, 'Primer viaje (para pago)', { vista: 'reclutamiento', tab: 'activados' })}
     ${kpi('Recuperación', recup, 'Potencial comeback', { cat: 'recuperacion' })}
     ${scope === 'equipo' ? kpi('Sin asignar', sinAsignar, 'Pendientes de repartir', { asignado: '_none', cat: 'todos' }) : kpi('Mis choferes', lista.length, 'Asignados a mí', { cat: 'todos' })}
   </div>
@@ -125,7 +130,11 @@ export function renderDashboard(el) {
 
   el.querySelectorAll('[data-fuente]').forEach((b) => (b.onclick = () => { S.ui.dashFuente = b.dataset.fuente; renderDashboard(el); }));
   el.querySelectorAll('[data-scope]').forEach((b) => (b.onclick = () => { S.ui.dashScope = b.dataset.scope; renderDashboard(el); }));
-  el.querySelectorAll('[data-filtro]').forEach((b) => (b.onclick = () => irChoferes({ ...filtroBase, ...JSON.parse(b.dataset.filtro) })));
+  el.querySelectorAll('[data-filtro]').forEach((b) => (b.onclick = () => {
+    const f = JSON.parse(b.dataset.filtro);
+    if (f.vista === 'reclutamiento') { S.ui.rec = { tab: f.tab, q: '', rec: scope === 'mios' ? yo.usuario : '', pagina: 0 }; ir('reclutamiento'); return; }
+    irChoferes({ ...filtroBase, ...f });
+  }));
   el.querySelectorAll('[data-go-seg]').forEach((b) => (b.onclick = () => irChoferes({ ...filtroBase, seg: b.dataset.goSeg, contacto: 'no_semana' })));
   el.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => ir(b.dataset.go)));
   el.querySelectorAll('[data-user]').forEach((b) => (b.onclick = () => irChoferes({ asignado: b.dataset.user, cat: 'todos' })));
