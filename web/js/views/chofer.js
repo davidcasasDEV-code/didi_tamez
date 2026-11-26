@@ -7,7 +7,7 @@ import { segHtml, estatusHtml } from './choferes.js';
 import { eventoHtml } from './actividad.js';
 
 let abiertoId = null;
-const RESULTADOS = ['Respondió', 'Se queda', 'Se quiere ir · se mandó liga de salida', 'Sin respuesta', 'Número equivocado', 'Buzón / no contesta', 'Otro trabajo', 'No le entran viajes', 'Tarifas', 'Beneficios', 'Agendó visita a oficina', 'Subirá documentos', 'Ya subió documentos', 'Problema con la app', 'Otro'];
+const RESULTADOS = ['Respondió SÍ (quiere el soporte)', 'Respondió NO (no quiere el soporte)', 'Respondió', 'Se queda', 'Se quiere ir · se mandó liga de salida', 'Sin respuesta', 'Número equivocado', 'Buzón / no contesta', 'Otro trabajo', 'No le entran viajes', 'Tarifas', 'Beneficios', 'Agendó visita a oficina', 'Subirá documentos', 'Ya subió documentos', 'Problema con la app', 'Otro'];
 
 function cerrar() {
   abiertoId = null;
@@ -159,6 +159,8 @@ function pintar(dr, d) {
     if (!f.estatus_contacto && /Sin respuesta|no contesta/.test(f.resultado)) f.estatus_contacto = 'sin_respuesta';
     if (!f.estatus_contacto && /visita/i.test(f.resultado)) f.estatus_contacto = 'visita_agendada';
     if (!f.estatus_contacto && f.resultado === 'Se queda') f.estatus_contacto = 'se_queda';
+    if (!f.estatus_contacto && /^Respondió SÍ/.test(f.resultado)) f.estatus_contacto = 'se_queda';
+    if (!f.estatus_contacto && /^Respondió NO/.test(f.resultado)) f.estatus_contacto = 'no_interesado';
     if (!f.estatus_contacto && /quiere ir/.test(f.resultado)) f.estatus_contacto = 'opt_out';
     await seguimiento(c.id, f);
   };

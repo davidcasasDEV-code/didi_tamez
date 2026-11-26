@@ -17,14 +17,14 @@ Somos un Aliado Autorizado de DiDi ubicado en Av Ruiz Cortines #5287, en Guadalu
 
 Hasta el momento, hemos apoyado a más de 80 conductores, principalmente en temas de activación, orientación sobre el uso de la aplicación y recomendaciones para mejorar su productividad y generar mayores ganancias en la plataforma.
 
-A partir de ahora, seré uno de tus puntos de contacto locales. Si tienes alguna duda o no te funciona la app o cambiaste de celular y no puedes ingresar, puedes comunicarte conmigo no tiene costo. ¡Estamos para ayudarte!
+A partir de ahora, seré uno de tus puntos de contacto locales. Si tienes alguna duda o no te funciona la app o cambiaste de celular y no puedes ingresar, puedes comunicarte conmigo NO TIENE COSTO. ¡Estamos para ayudarte!
 
 Te comparto nuestro Aviso de Privacidad (Anexo D):
 {liga_anexo_d}
 
-*Si NO deseas que sea parte de tu soporte*
-Si no estás interesado en recibir este acompañamiento, puedes solicitar dejar de participar a través de la siguiente liga de OPT OUT:
-{liga_salida}`,
+*Si NO deseas que sea parte de tu soporte Gratuito FAVOR DE AVISAR*
+
+Si estás interesado en el soporte gratuito escribe SI y si no estás interesado NO por favor`,
   },
   {
     id: 'seg_a', orden: 2, categoria: 'A', nombre: 'A · Sin viajes (lunes)',
