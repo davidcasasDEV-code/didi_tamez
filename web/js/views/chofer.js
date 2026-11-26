@@ -1,7 +1,7 @@
 // Detalle de un chofer (panel lateral) y selector de plantillas de WhatsApp.
 import { S, esAdmin, usuarioNombre, recargar, hashParams } from '../app.js';
 import { api } from '../api.js';
-import { esc, icon, fmtNum, fmtMoney, fmtFecha, celBonito, telLink, waLink, toast, modal, copiar, titulo, hace } from '../util.js';
+import { esc, icon, fmtNum, fmtMoney, fmtFecha, celBonito, telLink, waLink, toast, modal, copiar, titulo, hace, confirmar } from '../util.js';
 import { ESTATUS_CONTACTO, SEGMENTOS, semanaLabel, variables, llenar, sugerida, VARIABLES_DISPONIBLES } from '../logic.js';
 import { segHtml, estatusHtml } from './choferes.js';
 import { eventoHtml } from './actividad.js';
@@ -52,6 +52,8 @@ function pintar(dr, d) {
       <div style="flex:1;min-width:0"><h2 style="font-size:18px">${esc(titulo(c.nombre || '(sin nombre)'))}</h2>
         <div class="small muted">${esc(celBonito(c.cel))} · ID ${esc(c.id)}</div></div>
       ${segHtml(d)}
+      <button class="btn icon ghost" id="dedit" title="Editar datos">${icon('edit')}</button>
+      ${puedeEliminar(c) ? `<button class="btn icon ghost danger" id="ddel" title="Eliminar">${icon('trash')}</button>` : ''}
       <button class="btn icon ghost" id="dx" title="Cerrar">${icon('x')}</button>
     </div>
     ${c.cel ? `<div class="row" style="margin-top:10px">
@@ -143,6 +145,8 @@ function pintar(dr, d) {
   dr.scrollTop = scroll;
 
   dr.querySelector('#dx').onclick = cerrar;
+  dr.querySelector('#dedit').onclick = () => editarDatos(c);
+  dr.querySelector('#ddel')?.addEventListener('click', () => eliminar(c));
   const cel = dr.querySelector('#dcel');
   cel.onblur = () => { if (cel.value.trim() !== (c.celular_alt || '')) patch(c.id, { celular_alt: cel.value.trim() }, 'Celular guardado'); };
   dr.querySelector('#dwa')?.addEventListener('click', () => abrirPlantillas(c.id));
@@ -174,6 +178,43 @@ function pintar(dr, d) {
     await seguimiento(c.id, f);
   };
   cargarHistorial(c.id, dr);
+}
+
+// ---------------------------------------------------------------- editar / eliminar
+const puedeEliminar = (c) => esAdmin() || (c.reclutado_por === S.yo.usuario && !(c.fuentes || []).includes('asignados'));
+
+function editarDatos(c) {
+  const m = modal(`<h2>Editar datos</h2>
+    <form id="fed" class="grid">
+      <label class="field">Nombre completo<input class="input" name="nombre" required value="${esc(c.nombre || '')}"></label>
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <label class="field">Celular (10 dígitos)<input class="input" name="celular" inputmode="tel" value="${esc(String(c.celular || '').replace(/^52/, ''))}"></label>
+        <label class="field">CURP<input class="input" name="curp" maxlength="18" style="text-transform:uppercase" value="${esc(c.curp || '')}"></label>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <label class="field">Ciudad<input class="input" name="ciudad" value="${esc(c.ciudad || '')}"></label>
+        <label class="field">¿Tiene auto?<input class="input" name="tiene_auto" placeholder="Sí / No / va a rentar…" value="${esc(c.tiene_auto || '')}"></label>
+      </div>
+      <div class="small muted">Si DiDi manda después otro dato en su Excel (por ejemplo el nombre o el celular), el de DiDi lo actualiza.</div>
+      <div class="actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary">Guardar</button></div>
+    </form>`);
+  m.el.querySelector('#fed').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const orig = { nombre: c.nombre || '', celular: String(c.celular || '').replace(/^52/, ''), curp: c.curp || '', ciudad: c.ciudad || '', tiene_auto: c.tiene_auto || '' };
+    const body = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, String(v).trim()]).filter(([k, v]) => v !== orig[k]));
+    if (!Object.keys(body).length) { m.close(); return; }
+    try { await api(`/choferes/${encodeURIComponent(c.id)}`, { method: 'PATCH', body }); toast('Datos actualizados'); m.close(); await recargar(); }
+    catch (err) { toast(err.message, { tipo: 'err' }); }
+  };
+}
+
+async function eliminar(c) {
+  const deDidi = (c.fuentes || []).some((f) => f !== 'reclutamiento');
+  const ok = await confirmar(`Se eliminará a ${titulo(c.nombre || c.id)} con todo su historial de contactos. No se puede deshacer.${deDidi ? ' Si DiDi lo vuelve a mandar en un Excel, aparecerá de nuevo.' : ''}`, { ok: 'Eliminar', peligro: true });
+  if (!ok) return;
+  try { await api(`/choferes/${encodeURIComponent(c.id)}`, { method: 'DELETE' }); toast('Registro eliminado'); cerrar(); await recargar(); }
+  catch (err) { toast(err.message, { tipo: 'err' }); }
 }
 
 const pct = (t) => (t == null ? '—' : `${t > 0 ? '+' : ''}${(t * 100).toFixed(0)}%`);

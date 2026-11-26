@@ -208,7 +208,7 @@ async function fusionarProvisionales(rows) {
   return fusionados;
 }
 async function importarLote(user, body) {
-  soloAdmin(user);
+  // Cualquier usuario del equipo puede importar los Excel de DiDi (solo actualizan datos, no reparten).
   const { tipo, semana, rows } = body;
   if (!['asignados', 'conversion', 'productividad', 'recuperacion', 'general'].includes(tipo)) throw new HttpError(400, 'Tipo de archivo no reconocido');
   if (!/^\d{4}-W\d{2}$/.test(semana || '')) throw new HttpError(400, 'Semana inválida (formato 2026-W46)');
@@ -260,7 +260,6 @@ async function importarLote(user, body) {
 }
 
 async function finalizarImport(user, body) {
-  soloAdmin(user);
   const { semana, archivo = '', tipo = '', resumen = {} } = body;
   if (!/^\d{4}-W\d{2}$/.test(semana || '')) throw new HttpError(400, 'Semana inválida');
   // Semanas presentes = particiones en la tabla Semanas (scan proyectado, barato a este volumen).
@@ -418,7 +417,8 @@ async function crearRecluta(user, b) {
  * Empata por CURP o celular con lo que ya mandó DiDi; si no existe, crea el recluta provisional.
  */
 async function importarReclutas(user, b) {
-  soloAdmin(user);
+  // Un reclutador solo puede importar reclutas a su propio nombre y sin quitárselos a nadie.
+  if (user.rol !== 'admin') b = { ...b, reclutado_por: user.usuario, reemplazar: false };
   const rows = Array.isArray(b.rows) ? b.rows : [];
   if (!rows.length || rows.length > 500) throw new HttpError(400, 'Lote inválido (máx. 500 filas)');
   const reclutador = String(b.reclutado_por || user.usuario);
@@ -441,8 +441,10 @@ async function importarReclutas(user, b) {
       res.empatados++;
       const otro = ex.reclutado_por && ex.reclutado_por !== reclutador;
       if (otro) res.yaTenianOtro++;
-      const sets = ['conduciendo_manual = :cm', 'tiene_auto = :ta', 'actualizado_en = :ts', 'reclutado_en = if_not_exists(reclutado_en, :ts)'];
+      if (otro && !b.reemplazar) return; // es recluta de otra persona: no se toca nada
+      const sets = ['conduciendo_manual = :cm', 'actualizado_en = :ts', 'reclutado_en = if_not_exists(reclutado_en, :ts)'];
       const vals = { ...extra };
+      if (extra[':ta']) sets.push('tiene_auto = :ta'); else delete vals[':ta'];
       // combinar: si otro archivo ya lo marcó como conduciendo, no se regresa a esperando
       if (b.combinar && ex.conduciendo_manual === true) vals[':cm'] = true;
       if (r.hoja && !(b.combinar && ex.conduciendo_manual === true && !r.conduciendo)) { sets.push('hoja_equipo = :hj'); vals[':hj'] = String(r.hoja).slice(0, 60); }
@@ -498,6 +500,23 @@ async function actualizarChofer(user, id, body) {
   if (body.notas !== undefined) { sets.push('notas = :n'); vals[':n'] = String(body.notas).slice(0, 2000); }
   if (body.celular_alt !== undefined) { sets.push('celular_alt = :c'); vals[':c'] = String(body.celular_alt).slice(0, 20); }
   if (body.conduciendo_manual !== undefined) { sets.push('conduciendo_manual = :cmm'); vals[':cmm'] = !!body.conduciendo_manual; }
+  // Edición de datos básicos (cualquiera que pueda ver al chofer)
+  if (body.nombre !== undefined) {
+    const n = String(body.nombre).trim(); if (!n) throw new HttpError(400, 'El nombre no puede quedar vacío');
+    sets.push('nombre = :nom'); vals[':nom'] = n.slice(0, 120);
+  }
+  if (body.celular !== undefined) {
+    const c = soloDigitos(body.celular);
+    if (c && c.length !== 10) throw new HttpError(400, 'El celular debe tener 10 dígitos');
+    sets.push('celular = :cel'); vals[':cel'] = c ? '52' + c : null;
+  }
+  if (body.curp !== undefined) {
+    const c = String(body.curp).trim().toUpperCase();
+    if (c && !/^[A-Z]{4}\d{6}[A-Z0-9]{8}$/.test(c)) throw new HttpError(400, 'La CURP no tiene un formato válido (18 caracteres)');
+    sets.push('curp = :curp'); vals[':curp'] = c || null;
+  }
+  if (body.ciudad !== undefined) { sets.push('ciudad = :ciu'); vals[':ciu'] = String(body.ciudad).trim().slice(0, 80); }
+  if (body.tiene_auto !== undefined) { sets.push('tiene_auto = :tau'); vals[':tau'] = String(body.tiene_auto).trim().slice(0, 80); }
   if (body.reclutado_por !== undefined) {
     soloAdmin(user); // de esto depende el pago, solo el administrador lo corrige
     sets.push('reclutado_por = :rp', 'reclutado_en = if_not_exists(reclutado_en, :ts)'); vals[':rp'] = body.reclutado_por || null;
@@ -509,6 +528,10 @@ async function actualizarChofer(user, id, body) {
   if (body.estatus_contacto !== undefined) {
     await registrarEvento({ id, usuario: user, tipo: 'estatus', resultado: `Estatus → ${body.estatus_contacto}`, extra: { nombre: r.Attributes.nombre } });
   }
+  const editados = ['nombre', 'celular', 'curp', 'ciudad', 'tiene_auto'].filter((k) => body[k] !== undefined);
+  if (editados.length) {
+    await registrarEvento({ id, usuario: user, tipo: 'nota', resultado: `Editó datos: ${editados.join(', ')}`, extra: { nombre: r.Attributes.nombre } });
+  }
   if (body.conduciendo_manual !== undefined) {
     await registrarEvento({ id, usuario: user, tipo: 'estatus', resultado: body.conduciendo_manual ? 'Movido a Conduciendo' : 'Regresado a Esperando estatus', extra: { nombre: r.Attributes.nombre } });
   }
@@ -517,6 +540,26 @@ async function actualizarChofer(user, id, body) {
   }
   await bumpVersion();
   return clean(r.Attributes);
+}
+
+/**
+ * Elimina a una persona con su historial y métricas. Admin: cualquiera.
+ * Reclutador: solo sus propios reclutas (no los de la lista de asignados de DiDi).
+ * Si DiDi la vuelve a mandar en un Excel, se crea de nuevo.
+ */
+async function eliminarChofer(user, id) {
+  const c = await choferVisible(user, id);
+  if (user.rol !== 'admin' && !(c.reclutado_por === user.usuario && !fuentesDe(c).has('asignados'))) {
+    throw new HttpError(403, 'Solo puedes eliminar a tus propios reclutas; pide al administrador eliminar este registro');
+  }
+  const evs = await queryAll({ TableName: T.seguimiento, KeyConditionExpression: 'id = :i', ExpressionAttributeValues: { ':i': id }, ProjectionExpression: 'id, ts' });
+  await batchWrite(T.seguimiento, evs.map((e) => ({ DeleteRequest: { Key: { id: e.id, ts: e.ts } } })));
+  const mets = await scanAll(T.semanas, { FilterExpression: 'id = :i', ExpressionAttributeValues: { ':i': id }, ProjectionExpression: 'semana, id' });
+  await batchWrite(T.semanas, mets.map((m) => ({ DeleteRequest: { Key: { semana: m.semana, id: m.id } } })));
+  await db.send(new DeleteCommand({ TableName: T.choferes, Key: { id } }));
+  await registrarEvento({ usuario: user, tipo: 'nota', resultado: `Eliminó a ${c.nombre || id}`, nota: c.reclutado_por ? 'Recluta' : fuentesDe(c).has('asignados') ? 'Lista de asignados' : '' });
+  await bumpVersion();
+  return { ok: true };
 }
 
 async function nuevoSeguimiento(user, id, body) {
@@ -668,7 +711,7 @@ async function route(event) {
   if (method === 'POST' && path === '/reclutas') return crearRecluta(user, body);
   if (method === 'POST' && path === '/import/reclutas') return importarReclutas(user, body);
   if (method === 'POST' && path === '/import/finalizar-reclutas') {
-    soloAdmin(user);
+    if (user.rol !== 'admin') body.reclutado_por = user.usuario;
     const r = body.resumen || {};
     const quien = (await db.send(new GetCommand({ TableName: T.usuarios, Key: { usuario: String(body.reclutado_por || '') } }))).Item?.nombre || body.reclutado_por;
     const hist = (await getConfig('importaciones')) || [];
@@ -691,6 +734,7 @@ async function route(event) {
     if (method === 'POST') return nuevoSeguimiento(user, id, body);
   }
   if ((mm = m(/^\/choferes\/([^/]+)$/)) && method === 'PATCH') return actualizarChofer(user, decodeURIComponent(mm[1]), body);
+  if ((mm = m(/^\/choferes\/([^/]+)$/)) && method === 'DELETE') return eliminarChofer(user, decodeURIComponent(mm[1]));
   if (method === 'POST' && path === '/import/lote') return importarLote(user, body);
   if (method === 'POST' && path === '/import/finalizar') return finalizarImport(user, body);
 

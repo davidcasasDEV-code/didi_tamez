@@ -28,7 +28,7 @@ const VISTAS = {
   choferes: { label: 'Asignaciones', corto: 'Asignados', icon: 'car', render: renderChoferes },
   reclutamiento: { label: 'Reclutamiento', corto: 'Reclutas', icon: 'users', render: renderReclutamiento },
   actividad: { label: 'Actividad', icon: 'pulse', render: renderActividad },
-  importar: { label: 'Importar', icon: 'upload', render: renderImportar, admin: true },
+  importar: { label: 'Importar', icon: 'upload', render: renderImportar }, // todo el equipo puede importar los Excel de DiDi
   admin: { label: 'Administración', corto: 'Admin', icon: 'gear', render: renderAdmin, admin: true },
 };
 

@@ -1,5 +1,5 @@
 // Importación de los Excel de DiDi: detección automática, semana, carga en lotes y depuración (solo 3 semanas).
-import { S, recargar, ir } from '../app.js';
+import { S, recargar, ir, esAdmin } from '../app.js';
 import { api } from '../api.js';
 import { esc, icon, fmtNum, fmtFecha, toast } from '../util.js';
 import { leerArchivo, TIPO_LABEL } from '../importer.js';
@@ -57,9 +57,10 @@ function pintarPrevia(el) {
   prev.innerHTML = `<div class="card">
     <div class="card-h"><h2 style="flex:1">${esc(archivo)}</h2><button class="btn icon ghost" id="pcan">${icon('x')}</button></div>
     ${conjuntos.some((c) => c.tipo === 'reclutas') ? `<div class="card" style="background:var(--surface-2);box-shadow:none;margin-bottom:10px">
-      <div class="row"><label class="field" style="flex:1;min-width:200px">¿Quién reclutó a las personas de este archivo?
+      ${esAdmin() ? `<div class="row"><label class="field" style="flex:1;min-width:200px">¿Quién reclutó a las personas de este archivo?
         <select class="input" id="prec">${S.data.usuarios.filter((u) => u.activo).map((u) => `<option value="${esc(u.usuario)}" ${u.usuario === (estado.reclutador || S.yo.usuario) ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select></label>
-        <label class="row small" style="align-self:flex-end"><input type="checkbox" id="preem" ${estado.reemplazar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--brand)"> Reemplazar si ya tienen otro reclutador</label></div>
+        <label class="row small" style="align-self:flex-end"><input type="checkbox" id="preem" ${estado.reemplazar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--brand)"> Reemplazar si ya tienen otro reclutador</label></div>`
+      : `<div><b>Quedarán registrados como reclutados por ti (${esc(S.yo.nombre)}).</b> Si alguno ya es recluta de otra persona, se respeta.</div>`}
       <div class="small muted" style="margin-top:6px">Se empatan por CURP o celular con lo que ya reportó DiDi (no se duplican). Los que DiDi aún no reporta se crean como reclutas en espera. Esto no toca Asignaciones.</div>
     </div>` : ''}
     <div class="grid">${conjuntos.map((c, i) => {
@@ -140,7 +141,7 @@ async function importar(el) {
       ${conReclutas ? `<p><b>Reclutas:</b> ${resRec.empatados} empatados con lo que ya reportó DiDi · ${resRec.nuevos} nuevos en espera${resRec.yaTenianOtro ? ` · ${resRec.yaTenianOtro} ya tenían otro reclutador${reemplazar ? ' (se reemplazó)' : ' (se respetó)'}` : ''}${resRec.sinDatos ? ` · ${resRec.sinDatos} sin CURP ni celular (no se cargaron)` : ''}</p>` : ''}
       ${semanas.length ? `<p>${resumen.nuevos} choferes nuevos · ${resumen.actualizados} actualizados.<br>
       Semanas en la base: ${fin.semanas.map(semanaLabel).join(', ')}${fin.depuradas.length ? `<br><b>Se depuraron:</b> ${fin.depuradas.map(semanaLabel).join(', ')} (${fin.registrosBorrados} registros)` : ''}</p>` : ''}
-      ${sinAsignar && sel.some((c) => c.tipo === 'asignados') ? `<button class="btn primary" id="gasig">Asignar los ${sinAsignar} sin asignar</button>` : ''}
+      ${esAdmin() && sinAsignar && sel.some((c) => c.tipo === 'asignados') ? `<button class="btn primary" id="gasig">Asignar los ${sinAsignar} sin asignar</button>` : ''}
     </div>`;
     el.querySelector('#gasig')?.addEventListener('click', () => {
       S.ui.filtros = { cat: 'todos', q: '', seg: '', asignado: '_none', contacto: '', orden: 'prioridad' };
