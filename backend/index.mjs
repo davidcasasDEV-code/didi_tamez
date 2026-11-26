@@ -284,23 +284,43 @@ async function finalizarImport(user, body) {
   return { semanas: conservar, depuradas: semanasBorradas, registrosBorrados: borrar.length };
 }
 
+// ---------------------------------------------------------------- visibilidad
+// Un reclutador solo ve, de los choferes que ya conducen, los que tiene asignados.
+// La base de Reclutamiento (registro, altas del equipo, nuevos conductores) sí la ve todo el equipo.
+const fuentesDe = (c) => new Set(c.fuentes instanceof Set ? c.fuentes : c.fuentes || []);
+const esRecluta = (c) => { const f = fuentesDe(c); return f.has('conversion') || f.has('reclutamiento') || f.has('productividad') || !!c.reclutado_por; };
+const puedeVer = (user, c) => user.rol === 'admin' || c.asignado_a === user.usuario || esRecluta(c);
+async function choferVisible(user, id) {
+  const c = (await db.send(new GetCommand({ TableName: T.choferes, Key: { id } }))).Item;
+  if (!c) throw new HttpError(404, 'Chofer no encontrado');
+  if (!puedeVer(user, c)) throw new HttpError(403, 'Este chofer está asignado a otra persona');
+  return c;
+}
+async function idsVisibles(user) {
+  const todos = await scanAll(T.choferes, { ProjectionExpression: 'id, asignado_a, fuentes, reclutado_por' });
+  return new Set(todos.filter((c) => puedeVer(user, c)).map((c) => c.id));
+}
+
 // ---------------------------------------------------------------- handlers
 async function bootstrap(user) {
   const [usuarios, choferes, semanasItems, plantillas, umbrales, version, importaciones, anexo] = await Promise.all([
     scanAll(T.usuarios), scanAll(T.choferes), scanAll(T.semanas), scanAll(T.plantillas),
     getConfig('umbrales'), getConfig('version'), getConfig('importaciones'), getConfig('anexo_d'),
   ]);
+  const visibles = choferes.filter((c) => puedeVer(user, c));
+  const ids = new Set(visibles.map((c) => c.id));
   const metricas = {}; const general = {}; const semanas = new Set();
   for (const s of semanasItems) {
     semanas.add(s.semana);
     if (s.id === '_GENERAL') { general[s.semana] = s.kpis; continue; }
+    if (!ids.has(s.id)) continue;
     const { semana, id, importado_en, ...m } = s;
     (metricas[id] ||= {})[semana] = m;
   }
   return clean({
     yo: publicUser(user),
     usuarios: usuarios.map(publicUser),
-    choferes,
+    choferes: visibles,
     semanas: [...semanas].sort().reverse(),
     metricas, general,
     plantillas: plantillas.sort((a, b) => (a.orden ?? 99) - (b.orden ?? 99)),
@@ -312,6 +332,7 @@ async function bootstrap(user) {
 }
 
 async function asignar(user, { ids, usuario }) {
+  soloAdmin(user); // el reparto lo hace el administrador; un reclutador solo ve lo que tiene asignado
   if (!Array.isArray(ids) || !ids.length) throw new HttpError(400, 'Selecciona al menos un chofer');
   if (ids.length > 2000) throw new HttpError(400, 'Demasiados choferes en una sola asignación');
   let destino = null;
@@ -409,6 +430,7 @@ async function subirAnexo(user, b) {
 }
 
 async function actualizarChofer(user, id, body) {
+  await choferVisible(user, id);
   const sets = ['actualizado_en = :ts']; const vals = { ':ts': nowIso() };
   if (body.estatus_contacto !== undefined) {
     if (!ESTATUS_CONTACTO.includes(body.estatus_contacto)) throw new HttpError(400, 'Estatus no válido');
@@ -437,8 +459,7 @@ async function actualizarChofer(user, id, body) {
 async function nuevoSeguimiento(user, id, body) {
   const tipos = ['whatsapp', 'llamada', 'nota', 'visita', 'copiado'];
   if (!tipos.includes(body.tipo)) throw new HttpError(400, 'Tipo de seguimiento no válido');
-  const ch = (await db.send(new GetCommand({ TableName: T.choferes, Key: { id } }))).Item;
-  if (!ch) throw new HttpError(404, 'Chofer no encontrado');
+  const ch = await choferVisible(user, id);
   const ev = await registrarEvento({
     id, usuario: user, tipo: body.tipo, resultado: String(body.resultado || '').slice(0, 200),
     nota: String(body.nota || '').slice(0, 2000), plantilla: String(body.plantilla || '').slice(0, 80),
@@ -461,25 +482,37 @@ async function nuevoSeguimiento(user, id, body) {
   return { evento: clean(ev), chofer: clean(r.Attributes) };
 }
 
-async function historial(id) {
+async function historial(user, id) {
+  await choferVisible(user, id);
   const items = await queryAll({
     TableName: T.seguimiento, KeyConditionExpression: 'id = :id',
     ExpressionAttributeValues: { ':id': id }, ScanIndexForward: false,
   });
   return clean(items);
 }
-async function actividad(limit = 60, desde) {
+async function actividad(user, limit = 60, desde) {
+  const max = Math.min(Number(limit) || 60, 200);
+  // Para un reclutador: solo eventos de choferes que puede ver (y sus propias acciones generales).
+  let filtro = (e) => true;
+  if (user.rol !== 'admin') {
+    const ids = await idsVisibles(user);
+    filtro = (e) => (e.id && !e.id.startsWith('_') ? ids.has(e.id) : e.usuario === user.usuario || e.tipo === 'import');
+  }
   if (desde) { // todo lo ocurrido desde una fecha (para el formato semanal de DiDi)
-    return clean(await queryAll({
+    return clean((await queryAll({
       TableName: T.seguimiento, IndexName: 'Feed', KeyConditionExpression: 'gpk = :f AND ts >= :d',
       ExpressionAttributeValues: { ':f': 'F', ':d': String(desde) }, ScanIndexForward: true,
-    }));
+    })).filter(filtro));
   }
-  const r = await db.send(new QueryCommand({
-    TableName: T.seguimiento, IndexName: 'Feed', KeyConditionExpression: 'gpk = :f',
-    ExpressionAttributeValues: { ':f': 'F' }, ScanIndexForward: false, Limit: Math.min(Number(limit) || 60, 200),
-  }));
-  return clean(r.Items || []);
+  const out = []; let ExclusiveStartKey;
+  do {
+    const r = await db.send(new QueryCommand({
+      TableName: T.seguimiento, IndexName: 'Feed', KeyConditionExpression: 'gpk = :f',
+      ExpressionAttributeValues: { ':f': 'F' }, ScanIndexForward: false, Limit: 200, ExclusiveStartKey,
+    }));
+    out.push(...(r.Items || []).filter(filtro)); ExclusiveStartKey = r.LastEvaluatedKey;
+  } while (out.length < max && ExclusiveStartKey);
+  return clean(out.slice(0, max));
 }
 
 // usuarios
@@ -568,7 +601,7 @@ async function route(event) {
   const user = await auth(event);
   if (method === 'GET' && path === '/version') return { version: (await getConfig('version')) || 0 };
   if (method === 'GET' && path === '/bootstrap') { await asegurarPlantillas(); return bootstrap(user); }
-  if (method === 'GET' && path === '/actividad') return actividad(q.limit, q.desde);
+  if (method === 'GET' && path === '/actividad') return actividad(user, q.limit, q.desde);
   if (method === 'POST' && path === '/reclutas') return crearRecluta(user, body);
   if (method === 'POST' && path === '/anexo') return subirAnexo(user, body);
   if (method === 'POST' && path === '/password') {
@@ -579,7 +612,7 @@ async function route(event) {
   let mm;
   if ((mm = m(/^\/choferes\/([^/]+)\/seguimiento$/))) {
     const id = decodeURIComponent(mm[1]);
-    if (method === 'GET') return historial(id);
+    if (method === 'GET') return historial(user, id);
     if (method === 'POST') return nuevoSeguimiento(user, id, body);
   }
   if ((mm = m(/^\/choferes\/([^/]+)$/)) && method === 'PATCH') return actualizarChofer(user, decodeURIComponent(mm[1]), body);

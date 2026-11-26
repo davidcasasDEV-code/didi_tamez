@@ -39,7 +39,7 @@ export function refrescarDrawer() {
 function pintar(dr, d) {
   const c = d.ch; const ws = d.semanas.slice(0, 3);
   const m = S.data.metricas[c.id] || {};
-  const puedeAsignarme = !esAdmin() && !c.asignado_a;
+  const puedeAsignarme = false; // el reparto lo hace el administrador
   const usuarios = S.data.usuarios.filter((u) => u.activo);
   const segTxt = d.seg ? `<b>${d.seg} · ${SEGMENTOS[d.seg].nombre}</b><div class="small muted">Plan: ${SEGMENTOS[d.seg].plan}</div>` : '<span class="muted">Sin segmento de contacto proactivo esta semana</span>';
   const fila = (lbl, k, dec = 0, money = false) => `<tr style="cursor:default"><td class="muted">${lbl}</td>${ws.map((w) => `<td class="num">${m[w] ? (money ? fmtMoney(m[w][k]) : fmtNum(m[w][k], dec)) : '—'}</td>`).join('')}</tr>`;

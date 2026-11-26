@@ -8,6 +8,7 @@ import { eventoHtml } from './actividad.js';
 export function renderDashboard(el) {
   const yo = S.yo;
   S.ui.dashScope ||= esAdmin() ? 'equipo' : 'mios';
+  if (!esAdmin()) S.ui.dashScope = 'mios'; // un reclutador solo ve lo suyo
   const scope = S.ui.dashScope;
   const todosBase = [...S.d.values()];
   const todos = todosBase.filter((d) => d.cats.has('conduciendo'));
@@ -60,10 +61,10 @@ export function renderDashboard(el) {
     <div><h1>Hola, ${esc(yo.nombre.split(' ')[0])} 👋</h1>
       <div class="muted">Semanas en análisis: ${semanas.map(semanaLabel).join(' · ') || '—'} · hoy es ${DIAS[hoy.getDay()]}</div></div>
     <div class="spacer"></div>
-    <div class="tabs" style="margin:0">
+    ${esAdmin() ? `<div class="tabs" style="margin:0">
       <button class="tab ${scope === 'mios' ? 'active' : ''}" data-scope="mios">Mis choferes</button>
       <button class="tab ${scope === 'equipo' ? 'active' : ''}" data-scope="equipo">Todo el equipo</button>
-    </div>
+    </div>` : ''}
   </div>
 
   <div class="cols-2" style="margin-bottom:14px">
@@ -117,11 +118,11 @@ export function renderDashboard(el) {
     </div>
   </div>
 
-  <div class="cols-2b">
-    <div class="card">
+  <div class="${esAdmin() ? 'cols-2b' : ''}">
+    ${esAdmin() ? `<div class="card">
       <div class="card-h"><h2>Carga por reclutador</h2></div>
       ${cargaEquipo(todos)}
-    </div>
+    </div>` : ''}
     <div class="card">
       <div class="card-h"><h2>Actividad reciente</h2><span class="spacer"></span><a href="#/actividad" class="small">Ver todo</a></div>
       <div class="timeline" id="dact"><div class="muted small">Cargando…</div></div>

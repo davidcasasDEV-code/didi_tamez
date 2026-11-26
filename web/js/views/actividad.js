@@ -1,5 +1,5 @@
 // Feed de actividad del equipo (se actualiza con la sincronización automática).
-import { S } from '../app.js';
+import { S, esAdmin } from '../app.js';
 import { api } from '../api.js';
 import { esc, icon, hace, fmtFecha, titulo, avatar } from '../util.js';
 
@@ -21,9 +21,9 @@ export function eventoHtml(e, { sinNombre = false } = {}) {
 
 export async function renderActividad(el) {
   const filtro = S.ui.actUsuario || '';
-  el.innerHTML = `<div class="topbar"><div><h1>Actividad del equipo</h1><div class="muted">Lo que cada quien está haciendo, en vivo</div></div>
+  el.innerHTML = `<div class="topbar"><div><h1>${esAdmin() ? 'Actividad del equipo' : 'Actividad'}</h1><div class="muted">${esAdmin() ? 'Lo que cada quien está haciendo, en vivo' : 'Lo que pasa con tus choferes y reclutas'}</div></div>
     <div class="spacer"></div>
-    <select class="input" id="afu" style="width:auto"><option value="">Todo el equipo</option>${S.data.usuarios.map((u) => `<option value="${esc(u.usuario)}" ${filtro === u.usuario ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select></div>
+    <select class="input ${esAdmin() ? '' : 'hidden'}" id="afu" style="width:auto"><option value="">Todo el equipo</option>${S.data.usuarios.map((u) => `<option value="${esc(u.usuario)}" ${filtro === u.usuario ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select></div>
     <div class="cols-2"><div class="card"><div class="timeline" id="afeed"><div class="muted">Cargando…</div></div></div>
     <div class="card"><h2>Hoy por persona</h2><div id="ahoy" class="grid" style="margin-top:10px"></div></div></div>`;
   el.querySelector('#afu').onchange = (e) => { S.ui.actUsuario = e.target.value; renderActividad(el); };

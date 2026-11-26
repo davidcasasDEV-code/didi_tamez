@@ -19,6 +19,8 @@ export function filtrar(f = S.ui.filtros) {
   const qd = q.replace(/\D/g, '');
   let arr = [...S.d.values()].filter((d) => {
     if (!d.cats.has(f.universo || 'conduciendo')) return false;
+    // Un reclutador solo ve en Asignaciones los choferes que tiene asignados
+    if ((f.universo || 'conduciendo') === 'conduciendo' && !esAdmin() && d.ch.asignado_a !== S.yo.usuario) return false;
     if (f.cat !== 'todos' && !d.cats.has(f.cat)) return false;
     if (f.reclutado === '_none' && d.ch.reclutado_por) return false;
     if (f.reclutado && f.reclutado !== '_none' && d.ch.reclutado_por !== f.reclutado) return false;
@@ -79,7 +81,7 @@ export function renderChoferes(el) {
 
   el.innerHTML = `
   <div class="topbar">
-    <div><h1>Asignaciones</h1><div class="muted">${fmtNum(lista.length)} de ${fmtNum(todos.filter((d) => d.cats.has('conduciendo')).length)} choferes que ya conducen · semanas ${S.data.semanas.map(semanaLabel).join(', ') || '—'}</div></div>
+    <div><h1>Asignaciones</h1><div class="muted">${esAdmin() ? `${fmtNum(lista.length)} de ${fmtNum(todos.filter((d) => d.cats.has('conduciendo')).length)} choferes que ya conducen` : `${fmtNum(lista.length)} de tus ${fmtNum(todos.filter((d) => d.cats.has('conduciendo') && d.ch.asignado_a === S.yo.usuario).length)} choferes asignados`} · semanas ${S.data.semanas.map(semanaLabel).join(', ') || '—'}</div></div>
     <div class="spacer"></div>
     <button class="btn" id="bdidi" title="Mismo formato que la lista de DiDi, con Contactado y Lunes–Viernes llenos desde el historial">${icon('down')} Formato DiDi (semana)</button>
     <button class="btn" id="bexp">${icon('down')} Exportar Excel</button>
@@ -88,12 +90,12 @@ export function renderChoferes(el) {
   <div class="filters">
     <input class="input search" id="fq" placeholder="Buscar por nombre, celular, CURP o ID…" value="${esc(f.q)}">
     <select class="input" id="fseg"><option value="">Segmento: todos</option>${['A', 'B', 'C'].map((s) => `<option value="${s}" ${f.seg === s ? 'selected' : ''}>Segmento ${s}</option>`).join('')}</select>
-    <select class="input" id="fasig">
+    ${esAdmin() ? `<select class="input" id="fasig">
       <option value="">Asignado: todos</option>
       <option value="${esc(S.yo.usuario)}" ${f.asignado === S.yo.usuario ? 'selected' : ''}>Mis choferes</option>
       <option value="_none" ${f.asignado === '_none' ? 'selected' : ''}>Sin asignar</option>
       ${usuarios.filter((u) => u.usuario !== S.yo.usuario).map((u) => `<option value="${esc(u.usuario)}" ${f.asignado === u.usuario ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}
-    </select>
+    </select>` : ''}
     <select class="input" id="fcont">
       <option value="">Contacto: todos</option>
       <option value="no_semana" ${f.contacto === 'no_semana' ? 'selected' : ''}>Sin contactar esta semana</option>
@@ -114,7 +116,7 @@ export function renderChoferes(el) {
       <select class="input" id="basig" style="width:auto;padding:6px 10px"><option value="">Asignar a…</option>${usuarios.map((u) => `<option value="${esc(u.usuario)}">${esc(u.nombre)}</option>`).join('')}</select>
       <button class="btn sm primary" id="brep">${icon('split')} Repartir entre…</button>
       <button class="btn sm" id="blib">Quitar asignación</button>`
-    : `<button class="btn sm primary" id="btomar">Asignármelos</button><button class="btn sm" id="bsoltar">Liberar los míos</button>`}
+    : ''}
     <button class="btn sm" id="bclr">${icon('x')}</button>
   </div>` : `<div class="row small muted" style="margin-bottom:10px">
     ${esAdmin() ? `<span>Tip: selecciona por renglón del Excel (p. ej. 1 al 150) y luego "Asignar a…".</span>
@@ -124,7 +126,7 @@ export function renderChoferes(el) {
   ${lista.length ? `
   <div class="table-wrap table-desktop"><table class="t">
     <thead><tr>
-      <th style="width:34px"><input type="checkbox" id="chkall" ${todosSel ? 'checked' : ''} title="Seleccionar página"></th>
+      ${esAdmin() ? `<th style="width:34px"><input type="checkbox" id="chkall" ${todosSel ? 'checked' : ''} title="Seleccionar página"></th>` : ''}
       <th>Chofer</th><th>Seg.</th><th class="num">Viajes</th><th class="num">Horas</th><th class="num">Ingreso</th>
       <th>Estatus DiDi</th><th>Asignado</th><th>Contacto</th><th style="width:96px"></th>
     </tr></thead>
@@ -134,14 +136,14 @@ export function renderChoferes(el) {
   ${paginas > 1 ? `<div class="pager"><span class="muted small">Página ${S.ui.pagina + 1} de ${paginas}</span>
     <button class="btn sm" id="pprev" ${S.ui.pagina === 0 ? 'disabled' : ''}>Anterior</button>
     <button class="btn sm" id="pnext" ${S.ui.pagina >= paginas - 1 ? 'disabled' : ''}>Siguiente</button></div>` : ''}`
-  : `<div class="card empty"><h2>Sin resultados</h2><p>No hay choferes con estos filtros.</p><button class="btn" id="bclrf">Limpiar filtros</button></div>`}`;
+  : `<div class="card empty"><h2>Sin resultados</h2><p>${!esAdmin() && !todos.some((d) => d.ch.asignado_a === S.yo.usuario) ? 'Aún no tienes choferes asignados. El administrador te los asigna desde aquí.' : 'No hay choferes con estos filtros.'}</p><button class="btn" id="bclrf">Limpiar filtros</button></div>`}`;
 
   // ---------- eventos
   const set = (patch) => { Object.assign(f, patch); S.ui.pagina = 0; renderChoferes(el); };
   el.querySelectorAll('[data-cat]').forEach((b) => (b.onclick = () => set({ cat: b.dataset.cat })));
   let tq; el.querySelector('#fq').oninput = (e) => { clearTimeout(tq); tq = setTimeout(() => { set({ q: e.target.value }); const i = el.querySelector('#fq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
   el.querySelector('#fseg').onchange = (e) => set({ seg: e.target.value, cat: e.target.value && f.cat !== 'todos' ? 'prioridad' : f.cat });
-  el.querySelector('#fasig').onchange = (e) => set({ asignado: e.target.value });
+  el.querySelector('#fasig')?.addEventListener('change', (e) => set({ asignado: e.target.value }));
   el.querySelector('#fcont').onchange = (e) => set({ contacto: e.target.value });
   el.querySelector('#ford').onchange = (e) => set({ orden: e.target.value });
   el.querySelector('#bclrf')?.addEventListener('click', () => { S.ui.filtros = { ...filtrosDefault(), asignado: '', cat: 'todos' }; renderChoferes(el); });
@@ -196,7 +198,7 @@ function abrir(id) {
 function filaHtml(d) {
   const c = d.ch; const sel = S.ui.sel.has(c.id);
   return `<tr data-open="${esc(c.id)}" class="${sel ? 'sel' : ''}">
-    <td><input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''}></td>
+    ${esAdmin() ? `<td><input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''}></td>` : ''}
     <td class="name-cell"><b>${c.orden_lista ? `<span class="muted small">#${c.orden_lista}</span> ` : ''}${esc(titulo(c.nombre || '(sin nombre)'))}</b><span>${esc(celBonito(c.cel))} · ${c.bienvenida_enviada ? '<span style="color:var(--ok)">bienvenida ✓</span>' : '<span style="color:var(--warn)">sin bienvenida</span>'}</span></td>
     <td>${segHtml(d)}</td>
     <td class="num nowrap"><b>${d.m0 ? fmtNum(d.m0.viajes) : '—'}</b> ${trendHtml(d.trend.viajes)}</td>
@@ -213,7 +215,7 @@ function cardHtml(d) {
   const c = d.ch; const sel = S.ui.sel.has(c.id);
   return `<div class="mcard ${sel ? 'sel' : ''}" data-open="${esc(c.id)}">
     <div class="top">
-      <input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''} style="margin-top:4px;width:18px;height:18px;accent-color:var(--brand)">
+      ${esAdmin() ? `<input type="checkbox" data-chk="${esc(c.id)}" ${sel ? 'checked' : ''} style="margin-top:4px;width:18px;height:18px;accent-color:var(--brand)">` : ''}
       <div style="flex:1;min-width:0"><b>${esc(titulo(c.nombre || '(sin nombre)'))}</b><div class="small muted">${esc(celBonito(c.cel))} · ${esc(c.estatus_didi || '')}</div></div>
       ${segHtml(d)}
     </div>
