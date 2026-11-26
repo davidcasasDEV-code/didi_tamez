@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Choferes Tamez · DiDi</title>
+  <meta name="theme-color" content="#ff5000">
+  <link rel="icon" href="assets/didi-mark.jpg">
+  <link rel="apple-touch-icon" href="assets/didi-mark.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css?v=__V__">
+  <script>
+    // Aplica el tema antes de pintar para evitar parpadeo
+    try { const t = localStorage.getItem('tema'); if (t === 'dark' || (!t && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.dataset.theme = 'dark'; } catch {}
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <div class="toasts" id="toasts"></div>
+  <!-- Sin ?v: los módulos importan "../app.js" y una URL distinta crearía una segunda instancia del estado.
+       Los .js se publican con Cache-Control: no-cache, así que siempre se revalidan. -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

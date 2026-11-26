@@ -1,0 +1,7 @@
+infra/.build/
+node_modules/
+.DS_Store
+*.log
+.env
+*.xlsx
+.claude/
