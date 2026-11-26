@@ -103,7 +103,7 @@ function pintar(dr, d) {
         ${Object.keys(c.listas || {}).length ? `<span class="small muted">En Excel de ${Object.entries(c.listas).map(([u, h]) => `${esc(usuarioNombre(u))}: “${esc(h.join('”, “'))}”`).join(' · ')}</span>` : c.hoja_equipo ? `<span class="small muted">Pestaña de su Excel: “${esc(c.hoja_equipo)}”</span>` : ''}
         ${d.cats.has('didi_activo') ? '<span class="badge b-brand">DiDi ya lo reporta activo</span>' : ''}
         <span class="spacer"></span>
-        ${Object.keys(c.listas || {}).length ? '' : `<button class="btn sm" id="dcond">${d.cats.has('rec_conduciendo') ? 'Regresar a Esperando' : 'Mover a Conduciendo'}</button>`}
+        <button class="btn sm" id="dcond" title="Cambia su estatus en Reclutamiento. Si vuelven a importar el Excel de su reclutador, manda lo que diga el Excel.">${(d.cats.has('rec_conduciendo') && !d.cats.has('rec_esperando')) ? 'Regresar a Esperando' : 'Mover a Conduciendo'}</button>
       </div>` : ''}
       <label class="field" style="margin-top:10px">Notas del chofer (visibles para todo el equipo)
         <textarea class="input" id="dnotas" rows="2" placeholder="Ej. prefiere que le llamen en la tarde">${esc(c.notas || '')}</textarea></label>
@@ -159,8 +159,8 @@ function pintar(dr, d) {
     try { await api('/choferes/asignar', { method: 'POST', body: { ids: [c.id], usuario: S.yo.usuario } }); toast('Ahora este chofer es tuyo'); await recargar(); }
     catch (err) { toast(err.message, { tipo: 'err' }); }
   });
-  dr.querySelector('#dcond')?.addEventListener('click', () => patch(c.id, { conduciendo_manual: !d.cats.has('rec_conduciendo') },
-    d.cats.has('rec_conduciendo') ? 'Regresado a Esperando estatus' : 'Movido a Conduciendo'));
+  dr.querySelector('#dcond')?.addEventListener('click', () => patch(c.id, { conduciendo_manual: !(d.cats.has('rec_conduciendo') && !d.cats.has('rec_esperando')) },
+    (d.cats.has('rec_conduciendo') && !d.cats.has('rec_esperando')) ? 'Regresado a Esperando estatus' : 'Movido a Conduciendo'));
   dr.querySelector('#drec')?.addEventListener('change', (e) => patch(c.id, { reclutado_por: e.target.value || null }, 'Reclutador actualizado'));
   dr.querySelector('#dest').onchange = (e) => patch(c.id, { estatus_contacto: e.target.value }, 'Estatus actualizado');
   const notas = dr.querySelector('#dnotas');

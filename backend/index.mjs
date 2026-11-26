@@ -511,7 +511,7 @@ async function subirAnexo(user, b) {
 }
 
 async function actualizarChofer(user, id, body) {
-  await choferVisible(user, id);
+  const actual = await choferVisible(user, id);
   const sets = ['actualizado_en = :ts']; const vals = { ':ts': nowIso() };
   if (body.estatus_contacto !== undefined) {
     if (!ESTATUS_CONTACTO.includes(body.estatus_contacto)) throw new HttpError(400, 'Estatus no válido');
@@ -519,7 +519,16 @@ async function actualizarChofer(user, id, body) {
   }
   if (body.notas !== undefined) { sets.push('notas = :n'); vals[':n'] = String(body.notas).slice(0, 2000); }
   if (body.celular_alt !== undefined) { sets.push('celular_alt = :c'); vals[':c'] = String(body.celular_alt).slice(0, 20); }
-  if (body.conduciendo_manual !== undefined) { sets.push('conduciendo_manual = :cmm'); vals[':cmm'] = !!body.conduciendo_manual; }
+  const names = {};
+  if (body.conduciendo_manual !== undefined) {
+    sets.push('conduciendo_manual = :cmm'); vals[':cmm'] = !!body.conduciendo_manual;
+    // Si viene en el Excel de algún reclutador, se mueve también en esa lista (hasta que se vuelva a importar ese Excel).
+    Object.keys(actual).filter((k) => k.startsWith('lista_') && Array.isArray(actual[k]) && actual[k].length).forEach((k, i) => {
+      const hojas = actual[k];
+      const nuevas = body.conduciendo_manual ? ['conduciendo'] : (hojas.filter((h) => !/conduc/i.test(h)).length ? hojas.filter((h) => !/conduc/i.test(h)) : ['esperando status']);
+      names[`#l${i}`] = k; vals[`:l${i}`] = nuevas; sets.push(`#l${i} = :l${i}`);
+    });
+  }
   // Edición de datos básicos (cualquiera que pueda ver al chofer)
   if (body.nombre !== undefined) {
     const n = String(body.nombre).trim(); if (!n) throw new HttpError(400, 'El nombre no puede quedar vacío');
@@ -544,6 +553,7 @@ async function actualizarChofer(user, id, body) {
   const r = await db.send(new UpdateCommand({
     TableName: T.choferes, Key: { id }, UpdateExpression: `SET ${sets.join(', ')}`,
     ConditionExpression: 'attribute_exists(id)', ExpressionAttributeValues: vals, ReturnValues: 'ALL_NEW',
+    ...(Object.keys(names).length ? { ExpressionAttributeNames: names } : {}),
   })).catch((e) => { if (e.name === 'ConditionalCheckFailedException') throw new HttpError(404, 'Chofer no encontrado'); throw e; });
   if (body.estatus_contacto !== undefined) {
     await registrarEvento({ id, usuario: user, tipo: 'estatus', resultado: `Estatus → ${body.estatus_contacto}`, extra: { nombre: r.Attributes.nombre } });
