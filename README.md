@@ -33,7 +33,7 @@ Navegador ──https──► CloudFront (E830B0G98J1C1)
 |---|---|---|
 | **A · Sin viajes** | viajes = 0 en su última semana | Lun mensaje · Mar llamada · Jue seguimiento |
 | **B · Horas a la baja** | viajes > 0 y (viajes < 70 **o** TSH ≥ 15 % menor que la semana previa) | Mar recomendación · Jue seguimiento |
-| **C · Alto potencial** | viajes > 100 | Mié impulsar |
+| **C · Alto potencial** | viajes > 70 (como en el Excel de DiDi) | Mié impulsar |
 
 Un solo segmento por conductor (A > B > C). Solo aplica a choferes en operación (lista de asignados o productividad) y no bloqueados.
 **Depuración:** al importar se conservan las 3 semanas más recientes; cualquier semana más antigua se borra de `Semanas`

@@ -3,7 +3,7 @@
 export const DEFAULT_UMBRALES = {
   b_viajes_max: 70,       // B: viajes > 0 y menos de este número…
   b_caida_tsh_pct: 15,    // …o horas conectado (TSH) ≥ este % menor que la semana previa
-  c_viajes_min: 100,      // C: más de este número de viajes
+  c_viajes_min: 70,       // C: más de este número de viajes (DiDi usa >70; el slide 5.1 decía >100)
 };
 
 // Variables disponibles: {nombre} {nombre_completo} {mi_nombre} {viajes} {viajes_prev} {horas}
