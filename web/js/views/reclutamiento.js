@@ -15,6 +15,9 @@ const ultimaSemana = () => S.data.semanas[0];
 // Filtro por documento: pendiente = sin subir, rechazado/rejected, expirado o en revisión
 const DOCS_FILTRO = [['ine', 'INE'], ['licencia', 'Licencia de conducir'], ['tarjeta', 'Tarjeta de circulación'], ['foto', 'Foto de perfil'], ['bgc', 'Antecedentes (BGC)']];
 const docPendiente = (d, k) => /sin subir|rechaz|reject|expir|pending|review/i.test(d.ch.docs?.[k] || '');
+const docAprobado = (d, k) => /aprob|approved/i.test(d.ch.docs?.[k] || '');
+// valor del filtro: "tarjeta" = le falta / rechazado · "ok:tarjeta" = ya lo tiene aprobado
+const cumpleDoc = (d, v) => (v.startsWith('ok:') ? docAprobado(d, v.slice(3)) : docPendiente(d, v));
 const sinViajes = (d) => d.s0 === ultimaSemana() ? !(+d.m0?.viajes > 0) : true;
 
 const PARTES = {
@@ -55,7 +58,7 @@ function lista(f) {
   return [...S.d.values()].filter((d) => {
     if (!d.cats.has('recluta') || !parte.base(d) || !tab(d)) return false;
     if (f.parte !== 'didi' && f.rec && d.ch.reclutado_por !== f.rec) return false;
-    if (f.doc && !docPendiente(d, f.doc)) return false;
+    if (f.doc && !cumpleDoc(d, f.doc)) return false;
     if (q) {
       const hay = `${d.ch.nombre || ''} ${d.ch.curp || ''} ${d.ch.id}`.toLowerCase();
       if (!hay.includes(q) && !(qd.length >= 4 && String(d.ch.cel || '').includes(qd))) return false;
@@ -95,7 +98,7 @@ export function renderReclutamiento(el) {
       act: mios.filter((d) => d.ch.activado_semana).length, porSem: semanasAct.map((w) => mios.filter((d) => d.ch.activado_semana === w).length) };
   }).filter((r) => r.total);
 
-  const tabsHtml = parte.tabs.map(([k, l, fn]) => `<button class="tab ${f.tab === k ? 'active' : ''}" data-tab="${k}">${l} <span class="badge">${todos.filter(parte.base).filter(fn).filter((d) => (f.parte === 'didi' || !f.rec || d.ch.reclutado_por === f.rec) && (!f.doc || docPendiente(d, f.doc))).length}</span></button>`).join('');
+  const tabsHtml = parte.tabs.map(([k, l, fn]) => `<button class="tab ${f.tab === k ? 'active' : ''}" data-tab="${k}">${l} <span class="badge">${todos.filter(parte.base).filter(fn).filter((d) => (f.parte === 'didi' || !f.rec || d.ch.reclutado_por === f.rec) && (!f.doc || cumpleDoc(d, f.doc))).length}</span></button>`).join('');
 
   el.innerHTML = `
   <div class="topbar">
@@ -124,9 +127,14 @@ export function renderReclutamiento(el) {
       <option value="${esc(S.yo.usuario)}" ${f.rec === S.yo.usuario ? 'selected' : ''}>Mis reclutas</option>
       ${usuarios.filter((u) => u.usuario !== S.yo.usuario).map((u) => `<option value="${esc(u.usuario)}" ${f.rec === u.usuario ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}
     </select>` : '<div></div>'}
-    <select class="input" id="rdoc" title="Muestra solo a quienes les falta, les rechazaron o se les venció ese documento">
-      <option value="">Documento pendiente: cualquiera</option>
-      ${DOCS_FILTRO.map(([k, l]) => `<option value="${k}" ${f.doc === k ? 'selected' : ''}>Falta / rechazado: ${l} (${todos.filter(parte.base).filter((d) => docPendiente(d, k)).length})</option>`).join('')}
+    <select class="input" id="rdoc" title="Filtra por un documento: a quién le falta o quién ya lo tiene aprobado">
+      <option value="">Documentos: todos</option>
+      <optgroup label="Le falta / rechazado / vencido">
+      ${DOCS_FILTRO.map(([k, l]) => `<option value="${k}" ${f.doc === k ? 'selected' : ''}>Le falta: ${l} (${todos.filter(parte.base).filter((d) => docPendiente(d, k)).length})</option>`).join('')}
+      </optgroup>
+      <optgroup label="Ya lo tiene (aprobado)">
+      ${DOCS_FILTRO.map(([k, l]) => `<option value="ok:${k}" ${f.doc === 'ok:' + k ? 'selected' : ''}>Ya tiene: ${l} (${todos.filter(parte.base).filter((d) => docAprobado(d, k)).length})</option>`).join('')}
+      </optgroup>
     </select>
   </div>
 
