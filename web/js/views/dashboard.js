@@ -2,7 +2,7 @@
 import { S, esAdmin, ir } from '../app.js';
 import { api } from '../api.js';
 import { esc, icon, fmtNum, fmtMoney, fmtPct, avatar, hace } from '../util.js';
-import { semanaLabel, planDelDia, DIAS, SEGMENTOS } from '../logic.js';
+import { semanaLabel, semanaLabelInfo, planDelDia, DIAS, SEGMENTOS } from '../logic.js';
 import { eventoHtml } from './actividad.js';
 
 export function renderDashboard(el) {
@@ -59,7 +59,7 @@ export function renderDashboard(el) {
   el.innerHTML = `
   <div class="topbar">
     <div><h1>Hola, ${esc(yo.nombre.split(' ')[0])} 👋</h1>
-      <div class="muted">Semanas en análisis: ${semanas.map(semanaLabel).join(' · ') || '—'} · hoy es ${DIAS[hoy.getDay()]}</div></div>
+      <div class="muted">Semanas en análisis: ${semanas.map((w) => semanaLabelInfo(w, S.data.semanas_info)).join(' · ') || '—'} · hoy es ${DIAS[hoy.getDay()]}</div></div>
     <div class="spacer"></div>
     ${esAdmin() ? `<div class="tabs" style="margin:0">
       <button class="tab ${scope === 'mios' ? 'active' : ''}" data-scope="mios">Mis choferes</button>

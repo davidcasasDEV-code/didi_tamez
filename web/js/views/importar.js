@@ -75,7 +75,7 @@ function pintarPrevia(el) {
       const vieja = top3.length >= 3 && c.semana < top3[2] && !top3.includes(c.semana);
       return `<div class="row" style="border:1px solid var(--border);border-radius:12px;padding:10px">
         <input type="checkbox" data-inc="${i}" ${c.incluir ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--brand)">
-        <div style="flex:1;min-width:180px"><b>${esc(TIPO_LABEL[c.tipo])}</b>
+        <div style="flex:1;min-width:180px"><b>${esc((c.etiqueta || TIPO_LABEL[c.tipo]))}</b>
           <div class="small muted">Hoja “${esc(c.hoja)}” · ${fmtNum(c.total)} ${c.tipo === 'general' ? 'indicadores' : `choferes (${nuevos} nuevos)`}</div>
           ${vieja ? '<div class="small" style="color:var(--warn)">Esta semana es más antigua que las 3 que se conservan: se depurará al terminar.</div>' : ''}</div>
         <label class="row small">Semana <input class="input" type="number" min="1" max="53" value="${+w}" data-w="${i}" style="width:70px;padding:6px 8px">
@@ -129,7 +129,7 @@ async function importar(el) {
   try {
     for (const c of sel) {
       for (let i = 0; i < c.filas.length; i += LOTE) {
-        msg.textContent = `${TIPO_LABEL[c.tipo]}: ${Math.min(i + LOTE, c.filas.length)} de ${c.filas.length}…`;
+        msg.textContent = `${(c.etiqueta || TIPO_LABEL[c.tipo])}: ${Math.min(i + LOTE, c.filas.length)} de ${c.filas.length}…`;
         const rows = c.filas.slice(i, i + LOTE);
         if (c.tipo === 'reclutas') {
           const rr = await api('/import/reclutas', { method: 'POST', body: { reclutado_por: reclutador, reemplazar, rows } });
@@ -145,7 +145,10 @@ async function importar(el) {
     msg.textContent = 'Depurando semanas antiguas…';
     const semanas = [...new Set(sel.filter((c) => c.tipo !== 'reclutas').map((c) => c.semana))].sort();
     let fin = { semanas: S.data.semanas, depuradas: [], registrosBorrados: 0 };
-    for (const s of semanas) fin = await api('/import/finalizar', { method: 'POST', body: { semana: s, archivo, tipo: sel.map((c) => c.tipo).join('+'), resumen } });
+    // "Datos hasta": último viaje reportado en la semana (para saber si la semana ya cerró o va en curso)
+    const hastaDe = (s) => sel.filter((c) => c.semana === s && ['asignados', 'productividad'].includes(c.tipo))
+      .flatMap((c) => c.filas.map((f) => f.fecha_ultimo_viaje)).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '')).sort().pop() || '';
+    for (const s of semanas) fin = await api('/import/finalizar', { method: 'POST', body: { semana: s, archivo, tipo: sel.map((c) => c.tipo).join('+'), resumen, hasta: hastaDe(s) } });
     const conReclutas = sel.some((c) => c.tipo === 'reclutas');
     if (conReclutas) await api('/import/finalizar-reclutas', { method: 'POST', body: { archivo, reclutado_por: reclutador, resumen: resRec } });
     bar.firstElementChild.style.width = '100%';

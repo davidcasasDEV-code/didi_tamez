@@ -26,9 +26,11 @@ function tabla(XLSX, ws) {
 
 const DETECTORES = [
   { tipo: 'asignados', test: (h) => h.includes('semana_evaluacion') || h.includes('viajes_totales_semana') },
-  { tipo: 'conversion', test: (h) => h.includes('status ine') || h.includes('bgc') },
+  { tipo: 'conversion', test: (h) => h.includes('status ine') || h.includes('bgc') || h.includes('bgc_status') },
   { tipo: 'productividad', test: (h) => h.includes('promocion activa') },
   { tipo: 'recuperacion', test: (h) => h.includes('status del driver') || h.includes('last_trip_before_cb') },
+  // Dashboard W48+: "Productividad (Conductores Activos)" = viajes de la semana de la lista de asignados (los 300)
+  { tipo: 'activos', test: (h) => h.includes('recompensa activa') && h.includes('viajes totales de la semana') },
 ];
 export const TIPO_LABEL = {
   reclutas: 'Reclutas del equipo (Excel propio)',
@@ -62,9 +64,14 @@ const MAPEOS = {
     ciudad: txt(r['ciudad de registro']), ciudad_primer_viaje: txt(r['ciudad del primer viaje']),
     docs: {
       ine: txt(r['status ine']) || '', licencia: txt(r['status licencia']) || '', tarjeta: txt(r['status tarjeta de circ.']) || '',
-      foto: txt(r['foto de perfil']) || '', bgc: txt(r.bgc) || '',
+      foto: txt(r['foto de perfil']) || '', bgc: txt(r.bgc ?? r.bgc_status) || '',
     },
     comentario_didi: txt(r.comentario),
+  }),
+  activos: (r) => ({
+    id: txt(r['id conductor']), nombre: txt(r.nombre), curp: txt(r.curp), celular: cel(r.celular),
+    fecha_ultimo_viaje: fecha(r['fecha de ultimo viaje']), promocion: txt(r['recompensa activa']),
+    metricas: { viajes: num(r['viajes totales de la semana']), tsh: num(r['tiempo de conexion']), ingreso: num(r['ingreso por viajes']) },
   }),
   productividad: (r) => ({
     id: txt(r['id conductor']), nombre: txt(r.nombre), curp: txt(r.curp), celular: cel(r.celular),
@@ -152,7 +159,9 @@ export async function leerArchivo(file) {
     const filas = t.rows.map(MAPEOS[det.tipo])
       .map((r) => (r.id || !r.curp ? r : { ...r, id: `CURP-${r.curp.toUpperCase()}` }))
       .filter((r) => r.id);
-    conjuntos.push({ tipo: det.tipo, hoja: nombre, filas, total: filas.length, headers: t.headers, raw: t.rows });
+    // Los "Conductores Activos" son la lista de asignados: se guardan como su semana nueva (mismos segmentos y comparativa).
+    if (det.tipo === 'activos') conjuntos.push({ tipo: 'asignados', etiqueta: 'Conductores activos (tus 300 asignados) · viajes de la semana', hoja: nombre, filas, total: filas.length, headers: t.headers, raw: t.rows });
+    else conjuntos.push({ tipo: det.tipo, hoja: nombre, filas, total: filas.length, headers: t.headers, raw: t.rows });
   }
   // Semana sugerida: semana_evaluacion (asignados) > "W[47]" en el nombre del archivo > fecha más reciente de último viaje.
   for (const c of conjuntos) {

@@ -231,8 +231,14 @@ async function importarLote(user, body) {
       'estatus_contacto = if_not_exists(estatus_contacto, :pend)', 'contactos = if_not_exists(contactos, :cero)'];
     const vals = { ':ts': ts, ':pend': 'pendiente', ':cero': 0, ':f': new Set([tipo]) };
     for (const c of MERGE_CAMPOS) {
+      if (c === 'docs') continue; // los documentos se fusionan aparte (ver abajo)
       if (r[c] !== undefined && r[c] !== null && r[c] !== '') { sets.push(`${c} = :${c}`); vals[`:${c}`] = r[c]; }
     }
+    // Documentos: solo se actualizan los que DiDi manda con valor; si viene vacío se respeta el dato anterior
+    // (p. ej. el Dashboard W48 trae la columna bgc_status vacía).
+    const docsNuevos = r.docs && typeof r.docs === 'object'
+      ? Object.fromEntries(Object.entries(r.docs).filter(([, v]) => v && !/^null$/i.test(String(v)))) : null;
+    if (docsNuevos) { sets.push('docs = if_not_exists(docs, :docs0)'); vals[':docs0'] = docsNuevos; }
     if (r.metricas) { sets.push('ultima_semana = :sem'); vals[':sem'] = semana; }
     // Activación (primer viaje): se guarda la primera semana en que se detecta y no se borra con la depuración.
     const activo = /primer viaje/i.test(r.estatus_didi || '') || (tipo === 'productividad' && +r.metricas?.viajes > 0);
@@ -250,6 +256,15 @@ async function importarLote(user, body) {
       ExpressionAttributeValues: vals, ReturnValues: 'UPDATED_OLD',
     }));
     if (res.Attributes?.creado_en) actualizados++; else nuevos++;
+    if (res.Attributes?.creado_en && docsNuevos && Object.keys(docsNuevos).length) {
+      const ks = Object.keys(docsNuevos);
+      await db.send(new UpdateCommand({
+        TableName: T.choferes, Key: { id },
+        UpdateExpression: `SET ${ks.map((k, i) => `docs.#d${i} = :d${i}`).join(', ')}`,
+        ExpressionAttributeNames: Object.fromEntries(ks.map((k, i) => [`#d${i}`, k])),
+        ExpressionAttributeValues: Object.fromEntries(ks.map((k, i) => [`:d${i}`, docsNuevos[k]])),
+      }));
+    }
     if (r.metricas) metricas.push({ PutRequest: { Item: { semana, id, fuente: tipo, ...r.metricas, importado_en: ts } } });
     // Las columnas de seguimiento del Excel se registran en el historial solo si son nuevas (reimportar no duplica).
     if (notas && res.Attributes?.notas_excel !== notas) {
@@ -262,7 +277,7 @@ async function importarLote(user, body) {
 }
 
 async function finalizarImport(user, body) {
-  const { semana, archivo = '', tipo = '', resumen = {} } = body;
+  const { semana, archivo = '', tipo = '', resumen = {}, hasta = '' } = body;
   if (!/^\d{4}-W\d{2}$/.test(semana || '')) throw new HttpError(400, 'Semana inválida');
   // Semanas presentes = particiones en la tabla Semanas (scan proyectado, barato a este volumen).
   const items = await scanAll(T.semanas, { ProjectionExpression: 'semana, id' });
@@ -275,6 +290,18 @@ async function finalizarImport(user, body) {
   const hist = (await getConfig('importaciones')) || [];
   hist.unshift({ fecha: nowIso(), usuario: user.nombre, semana, archivo, tipo, resumen, depuradas: semanasBorradas });
   await putConfig('importaciones', hist.slice(0, 30));
+  // ¿La semana está completa? Si el último viaje reportado es antes del domingo, es una semana en curso (parcial).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(hasta)) {
+    const info = (await getConfig('semanas_info')) || {};
+    const [y, w] = semana.split('-W').map(Number);
+    const ene4 = new Date(Date.UTC(y, 0, 4)); const lunes = new Date(ene4); lunes.setUTCDate(ene4.getUTCDate() - ((ene4.getUTCDay() || 7) - 1) + (w - 1) * 7);
+    const domingo = new Date(lunes); domingo.setUTCDate(lunes.getUTCDate() + 6);
+    const previo = info[semana]?.hasta || '';
+    const h = hasta > previo ? hasta : previo;
+    info[semana] = { hasta: h, parcial: h < domingo.toISOString().slice(0, 10) };
+    for (const k of Object.keys(info)) if (!conservar.includes(k)) delete info[k];
+    await putConfig('semanas_info', info);
+  }
   await registrarEvento({
     usuario: user, tipo: 'import',
     resultado: `Importó ${archivo || tipo} (${semana})`,
@@ -305,9 +332,9 @@ async function idsVisibles(user) {
 
 // ---------------------------------------------------------------- handlers
 async function bootstrap(user) {
-  const [usuarios, choferes, semanasItems, plantillas, umbrales, version, importaciones, anexo] = await Promise.all([
+  const [usuarios, choferes, semanasItems, plantillas, umbrales, version, importaciones, anexo, semanasInfo] = await Promise.all([
     scanAll(T.usuarios), scanAll(T.choferes), scanAll(T.semanas), scanAll(T.plantillas),
-    getConfig('umbrales'), getConfig('version'), getConfig('importaciones'), getConfig('anexo_d'),
+    getConfig('umbrales'), getConfig('version'), getConfig('importaciones'), getConfig('anexo_d'), getConfig('semanas_info'),
   ]);
   const visibles = choferes.filter((c) => puedeVer(user, c));
   const ids = new Set(visibles.map((c) => c.id));
@@ -329,6 +356,7 @@ async function bootstrap(user) {
     umbrales: { ...DEFAULT_UMBRALES, ...(umbrales || {}) },
     importaciones: importaciones || [],
     ajustes: { anexo_d: anexo || null, liga_salida: 'https://d.didiglobal.com/salir' },
+    semanas_info: semanasInfo || {},
     version: version || 0,
   });
 }

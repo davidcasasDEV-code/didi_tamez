@@ -29,6 +29,13 @@ export function isoWeek(d = new Date()) {
 }
 export const semanaKey = (year, week) => `${year}-W${String(week).padStart(2, '0')}`;
 export const semanaLabel = (k) => (k ? `Sem ${Number(String(k).split('-W')[1])}` : '—');
+/** "Sem 48 (en curso, datos al 26 nov)" si DiDi mandó la semana incompleta. */
+export function semanaLabelInfo(k, info = {}) {
+  const i = info[k];
+  if (!i?.parcial) return semanaLabel(k);
+  const f = new Date(i.hasta + 'T12:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+  return `${semanaLabel(k)} (en curso, datos al ${f})`;
+}
 export function inicioSemana(d = new Date()) {
   const x = new Date(d); const day = x.getDay() || 7; x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - day + 1); return x;
 }

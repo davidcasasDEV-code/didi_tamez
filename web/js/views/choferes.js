@@ -2,7 +2,7 @@
 import { S, esAdmin, usuarioNombre, recargar, hashParams } from '../app.js';
 import { api } from '../api.js';
 import { esc, icon, fmtNum, fmtMoney, celBonito, telLink, avatar, hace, toast, modal, confirmar, cargarXLSX, titulo, colorDe, iniciales } from '../util.js';
-import { ESTATUS_CONTACTO, SEGMENTOS, semanaLabel, inicioSemana } from '../logic.js';
+import { ESTATUS_CONTACTO, SEGMENTOS, semanaLabel, semanaLabelInfo, inicioSemana } from '../logic.js';
 import { abrirPlantillas } from './chofer.js';
 import { waListo, enviarLote } from '../wa.js';
 
@@ -82,11 +82,12 @@ export function renderChoferes(el) {
 
   el.innerHTML = `
   <div class="topbar">
-    <div><h1>Asignaciones</h1><div class="muted">${esAdmin() ? `${fmtNum(lista.length)} de ${fmtNum(todos.filter((d) => d.cats.has('asignacion')).length)} choferes que ya conducen` : `${fmtNum(lista.length)} de tus ${fmtNum(todos.filter((d) => d.cats.has('asignacion') && d.ch.asignado_a === S.yo.usuario).length)} choferes asignados`} · semanas ${S.data.semanas.map(semanaLabel).join(', ') || '—'}</div></div>
+    <div><h1>Asignaciones</h1><div class="muted">${esAdmin() ? `${fmtNum(lista.length)} de ${fmtNum(todos.filter((d) => d.cats.has('asignacion')).length)} choferes que ya conducen` : `${fmtNum(lista.length)} de tus ${fmtNum(todos.filter((d) => d.cats.has('asignacion') && d.ch.asignado_a === S.yo.usuario).length)} choferes asignados`} · semanas ${S.data.semanas.map((w) => semanaLabelInfo(w, S.data.semanas_info)).join(', ') || '—'}</div></div>
     <div class="spacer"></div>
     <button class="btn" id="bdidi" title="Mismo formato que la lista de DiDi, con Contactado y Lunes–Viernes llenos desde el historial">${icon('down')} Formato DiDi (semana)</button>
     <button class="btn" id="bexp">${icon('down')} Exportar Excel</button>
   </div>
+  ${S.data.semanas_info?.[S.data.semanas[0]]?.parcial ? `<div class="card" style="margin-bottom:12px;background:var(--warn-bg);border-color:transparent;box-shadow:none"><b>${semanaLabelInfo(S.data.semanas[0], S.data.semanas_info)}.</b> Los viajes y horas aún no están completos, así que los segmentos A/B/C pueden cambiar. Cuando llegue el archivo de la semana completa, impórtenlo y se actualiza solo.</div>` : ''}
   <div class="tabs">${CATS.map(([k, l]) => `<button class="tab ${f.cat === k ? 'active' : ''}" data-cat="${k}">${l} <span class="badge">${cuentaCat(k)}</span></button>`).join('')}</div>
   <div class="filters">
     <input class="input search" id="fq" placeholder="Buscar por nombre, celular, CURP o ID…" value="${esc(f.q)}">
