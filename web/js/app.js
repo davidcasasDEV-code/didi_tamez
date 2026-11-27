@@ -50,10 +50,26 @@ export async function cargar({ silencioso = false } = {}) {
 /** Recarga tras una acción propia, conservando la vista. */
 export async function recargar() { await cargar({ silencioso: true }); }
 
+// Versión publicada del portal: si se publica una nueva mientras alguien lo tiene abierto, se recarga sola
+// (así nadie importa con código viejo). Si está a media importación o con una ventana abierta, solo avisa.
+let buildActual = null; let avisoBuild = false;
+async function revisarBuild() {
+  try {
+    const r = await fetch('version.json', { cache: 'no-store' }); if (!r.ok) return;
+    const { v } = await r.json();
+    if (!buildActual) { buildActual = v; return; }
+    if (v === buildActual) return;
+    const ocupado = vistaActual() === 'importar' || document.querySelector('.modal') || /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '');
+    if (!ocupado) { location.reload(); return; }
+    if (!avisoBuild) { avisoBuild = true; toast('Hay una versión nueva del portal', { accion: 'Actualizar', onAccion: () => location.reload(), ms: 60000 }); }
+  } catch { /* sin conexión: se revisa en la siguiente vuelta */ }
+}
+
 let pollTimer;
 async function poll() {
   clearTimeout(pollTimer);
   if (getToken() && document.visibilityState === 'visible' && S.data) {
+    revisarBuild();
     try {
       const { version } = await api('/version');
       if (version !== S.version) await cargar({ silencioso: true });

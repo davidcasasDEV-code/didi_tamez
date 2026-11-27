@@ -12,6 +12,8 @@ if [ "${1:-}" = "api" ]; then bash "$HERE/setup.sh" >/dev/null && echo "Lambda a
 V=$(date +%Y%m%d%H%M%S)
 OUT="$HERE/.build/web"; rm -rf "$OUT"; mkdir -p "$OUT"; cp -r "$HERE/../web/." "$OUT/"
 sed -i "s/__V__/$V/g" "$OUT/index.html"
+# version.json: el portal abierto la consulta cada 20 s y se recarga solo cuando cambia (nadie se queda con código viejo)
+printf '{"v":"%s"}' "$V" > "$OUT/version.json"
 W="$OUT"; command -v cygpath >/dev/null && W="$(cygpath -w "$OUT")"
 
 # html/js/css: no-cache (el navegador revalida con ETag en cada carga → siempre la versión nueva)
